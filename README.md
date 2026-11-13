@@ -1,0 +1,143 @@
+# DnsX
+
+Stdlib-only DNS recon for authorized assessments: enumerate a domain's DNS
+records, detect wildcard DNS, and test whether its nameservers allow zone
+transfers. No third-party dependencies — the DNS wire protocol (UDP + TCP,
+including AXFR) is implemented from scratch on Python's `socket` module.
+
+Built for recon work where you need quick DNS answers without installing
+`dnspython` or reaching for `dig` on a box that doesn't have it.
+
+## Install
+
+Python 3.11+ — nothing to install.
+
+```bash
+git clone https://github.com/harshzagade/dnsx.git
+cd dnsx
+python3 -m dnsx example.com
+```
+
+Or run it without cloning the entry point:
+
+```bash
+python3 -m dnsx --help
+```
+
+## Usage
+
+```bash
+# Full recon: A, AAAA, NS, MX, TXT, SOA + wildcard check + zone-transfer test
+python3 -m dnsx example.com
+
+# Only some record types, JSON output, custom resolver
+python3 -m dnsx example.com --types A,MX,TXT --json --server 1.1.1.1
+
+# Skip the wildcard / zone-transfer checks (faster, quieter)
+python3 -m dnsx example.com --no-wildcard --no-axfr
+
+# Non-standard resolver port (handy for a local test server)
+python3 -m dnsx example.com --server 127.0.0.1 --port 5353
+```
+
+Options:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `domain` | — | Domain to scan |
+| `--server` | `8.8.8.8` | DNS resolver to query |
+| `--port` | `53` | Resolver port |
+| `--timeout` | `5.0` | Per-query timeout in seconds |
+| `--types` | `A,AAAA,NS,MX,TXT,SOA` | Comma-separated record types (`A,AAAA,NS,MX,TXT,SOA,CNAME`) |
+| `--json` | off | Machine-readable JSON output |
+| `--no-wildcard` | off | Skip wildcard detection |
+| `--no-axfr` | off | Skip the zone-transfer test |
+| `--version` | — | Print version and exit |
+
+Exit codes: `0` clean run, `1` DNS/network error, `2` bad arguments or
+domain.
+
+## Sample output
+
+```text
+$ python3 -m dnsx example.com
+
+DnsX report for example.com
+
+[A]
+  example.com           165s  172.66.147.243
+  example.com           165s  104.20.23.154
+
+[AAAA]
+  example.com           156s  2606:4700:10::ac42:93f3
+  example.com           156s  2606:4700:10::6814:179a
+
+[NS]
+  example.com           21600s  hera.ns.cloudflare.com
+  example.com           21600s  elliott.ns.cloudflare.com
+
+[MX]
+  example.com           280s  0 .
+
+[TXT]
+  example.com           300s  v=spf1 -all
+  example.com           300s  _k2n1y4vw3qtb4skdx9e7dxt97qrmmq9
+
+[SOA]
+  example.com           345s  elliott.ns.cloudflare.com dns.cloudflare.com serial=2418004112 refresh=10000 retry=2400 expire=604800 minimum=1800
+
+[Wildcard]
+Wildcard DNS: not detected
+
+[Zone transfer]
+Zone transfer: zone transfer refused by all nameservers
+
+Scan took 22.778s
+```
+
+A vulnerable zone transfer looks like this instead:
+
+```text
+[Zone transfer]
+Zone transfer: VULNERABLE via ns1.example.com (41 records)
+```
+
+(`--json` adds a `sample` field with the first 5 transferred records.)
+
+## How it works
+
+- **Wire protocol** (`dnsx/dns.py`): builds and parses DNS messages by
+  hand — label encoding, compression pointers, and record decoding for
+  A, AAAA, NS, CNAME, MX, TXT, and SOA. UDP with automatic TCP fallback
+  when the TC (truncated) bit is set; AXFR runs over TCP.
+- **Wildcard detection** (`dnsx/recon.py`): queries two random
+  `dnsx<hex>.example.com` names. A wildcard is reported only when both
+  resolve *and* share at least one IP, so a single anycast fluke can't
+  flip the result.
+- **Zone-transfer test** (`dnsx/recon.py`): tries AXFR against each
+  nameserver in turn (max 3) and reports the first one that hands over
+  the zone.
+- **Output** (`dnsx/report.py`): plain-text report for humans, `--json`
+  for pipelines.
+
+## Tests
+
+```bash
+python3 -m pytest tests/ -q
+```
+
+27 tests, all hermetic: record parsing is checked against hand-built
+wire bytes, and client/CLI tests run against a fake in-process DNS
+server (a fake UDP socket + a real TCP listener on loopback), so the
+suite never touches the internet.
+
+## Scope note
+
+DnsX only reads public DNS data and only tests zone transfer against
+the target's own nameservers — the same information any resolver would
+hand out. Only run it against domains you own or are authorized to
+assess.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
