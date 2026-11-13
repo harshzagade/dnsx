@@ -29,6 +29,23 @@ def test_cli_basic(fake_dns_server, capsys):
     assert "12345 8 2" in out
 
 
+def test_cli_resolver(fake_dns_server, capsys):
+    fake_dns_server["set"](example_table())
+    code = main(["example.com", "--resolver", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--no-axfr"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Resolver: 127.0.0.1" in out
+    assert "93.184.216.34" in out
+
+
+def test_cli_resolver_overrides_server(fake_dns_server, capsys):
+    fake_dns_server["set"](example_table())
+    code = main(["example.com", "--server", "8.8.8.8", "--resolver", "127.0.0.1",
+                 "--port", str(fake_dns_server["tcp_port"]), "--no-axfr"])
+    assert code == 0
+    assert "Resolver: 127.0.0.1" in capsys.readouterr().out
+
+
 def test_cli_json(fake_dns_server, capsys):
     fake_dns_server["set"](example_table())
     main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--json", "--no-axfr"])
@@ -40,6 +57,8 @@ def test_cli_json(fake_dns_server, capsys):
     assert data["records"]["DS"][0]["data"]["key_tag"] == 12345
     assert data["records"]["DS"][0]["data"]["algorithm"] == 8
     assert data["records"]["DS"][0]["data"]["digest_type"] == 2
+    assert data["resolver"] == "127.0.0.1"
+    assert data["timeout"] == 5.0
 
 
 def test_cli_types_filter(fake_dns_server, capsys):
@@ -65,6 +84,10 @@ def test_cli_errors(capsys):
 
     with pytest.raises(SystemExit) as e:
         main(["ex.com", "--port", "99999"])
+    assert e.value.code == 2
+
+    with pytest.raises(SystemExit) as e:
+        main(["ex.com", "--resolver", "not-an-ip"])
     assert e.value.code == 2
 
 

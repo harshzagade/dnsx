@@ -92,6 +92,25 @@ def test_recon_axfr_failover():
     assert res.zone_transfer["vulnerable"] is True
     assert res.zone_transfer["nameserver"] == "ns2.com."
 
+def test_recon_records_resolver_and_timeout():
+    client = StubClient()
+    client.server = "1.1.1.1"
+    client.timeout = 2.5
+    recon = Recon(client=client)
+    res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=False)
+    assert res.resolver == "1.1.1.1"
+    assert res.timeout == 2.5
+    d = res.to_dict()
+    assert d["resolver"] == "1.1.1.1"
+    assert d["timeout"] == 2.5
+
+def test_recon_resolver_defaults_to_none_without_client_attrs():
+    recon = Recon(client=StubClient())
+    res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=False)
+    assert res.resolver is None
+    assert res.timeout is None
+    assert res.to_dict()["resolver"] is None
+
 def test_recon_caa_ds():
     routes = {
         ("example.com", RECORD_TYPES["CAA"]): [
@@ -140,7 +159,11 @@ def test_reports():
     assert "[A]" in txt and "93.184.216.34" in txt
     assert "Wildcard DNS: not detected" in txt
     assert "Zone transfer: refused" in txt
-    
+
+    # A result that knows its resolver shows it in the text report.
+    res2 = ReconResult("example.com", {}, {}, [], None, None, 0.1, "1.1.1.1", 2.5)
+    assert "Resolver: 1.1.1.1 (timeout 2.5s)" in render_text(res2)
+
     js = json.loads(render_json(res))
     assert js["domain"] == "example.com"
     assert js["records"]["A"][0]["data"] == "93.184.216.34"

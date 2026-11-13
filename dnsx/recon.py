@@ -30,6 +30,8 @@ class ReconResult:
     wildcard: dict | None = None
     zone_transfer: dict | None = None
     duration_seconds: float = 0.0
+    resolver: str | None = None
+    timeout: float | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -50,7 +52,9 @@ class ReconResult:
             "nameservers": self.nameservers,
             "wildcard": self.wildcard,
             "zone_transfer": self.zone_transfer,
-            "duration_seconds": round(self.duration_seconds, 3)
+            "duration_seconds": round(self.duration_seconds, 3),
+            "resolver": self.resolver,
+            "timeout": self.timeout
         }
 
 def format_record(record: dict) -> str:
@@ -107,6 +111,10 @@ class Recon:
             raise ValueError("Invalid domain name")
 
         result = ReconResult(domain=domain)
+        # Record which resolver answered and with what timeout, so the
+        # report (text and JSON) shows where the answers came from.
+        result.resolver = getattr(self.client, "server", None)
+        result.timeout = getattr(self.client, "timeout", None)
         last_resp = None
 
         for tname in types:

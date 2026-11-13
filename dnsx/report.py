@@ -3,6 +3,12 @@ from dnsx.recon import ReconResult, format_record, TYPE_NAMES
 
 def render_text(result: ReconResult) -> str:
     lines = [f"DnsX report for {result.domain}", ""]
+    if result.resolver is not None:
+        resolver_line = f"Resolver: {result.resolver}"
+        if result.timeout is not None:
+            resolver_line += f" (timeout {result.timeout}s)"
+        lines.append(resolver_line)
+        lines.append("")
     
     order = ["A", "AAAA", "NS", "MX", "TXT", "SOA", "CNAME", "CAA", "DS"]
     for tname in order:

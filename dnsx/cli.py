@@ -1,5 +1,6 @@
 import sys
 import argparse
+import ipaddress
 from dnsx import __version__
 from dnsx.recon import Recon, RECORD_TYPES
 from dnsx.report import render_text, render_json
@@ -12,6 +13,8 @@ def main(argv=None) -> int:
     )
     parser.add_argument("domain", help="Domain to scan")
     parser.add_argument("--server", default="8.8.8.8", help="DNS server to use (default: 8.8.8.8)")
+    parser.add_argument("--resolver", default=None,
+                        help="DNS resolver IP to query (overrides --server)")
     parser.add_argument("--port", type=int, default=53, help="DNS server port (default: 53)")
     parser.add_argument("--timeout", type=float, default=5.0, help="Query timeout in seconds (default: 5.0)")
     parser.add_argument("--types", default="A,AAAA,NS,MX,TXT,SOA,CAA,DS",
@@ -27,6 +30,12 @@ def main(argv=None) -> int:
         parser.error("Timeout must be greater than 0")
     if not 1 <= args.port <= 65535:
         parser.error("Port must be between 1 and 65535")
+    if args.resolver is not None:
+        try:
+            ipaddress.ip_address(args.resolver)
+        except ValueError:
+            parser.error(f"Invalid resolver IP: {args.resolver}")
+        args.server = args.resolver
 
     requested_types = [t.strip().upper() for t in args.types.split(",")]
     for t in requested_types:

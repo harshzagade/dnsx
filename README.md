@@ -31,7 +31,7 @@ python3 -m dnsx --help
 python3 -m dnsx example.com
 
 # Only some record types, JSON output, custom resolver
-python3 -m dnsx example.com --types A,MX,TXT --json --server 1.1.1.1
+python3 -m dnsx example.com --types A,MX,TXT --json --resolver 1.1.1.1
 
 # Skip the wildcard / zone-transfer checks (faster, quieter)
 python3 -m dnsx example.com --no-wildcard --no-axfr
@@ -46,6 +46,7 @@ Options:
 |------|---------|---------|
 | `domain` | — | Domain to scan |
 | `--server` | `8.8.8.8` | DNS resolver to query |
+| `--resolver` | — | Resolver IP to query (overrides `--server`; must be an IP) |
 | `--port` | `53` | Resolver port |
 | `--timeout` | `5.0` | Per-query timeout in seconds |
 | `--types` | `A,AAAA,NS,MX,TXT,SOA,CAA,DS` | Comma-separated record types (`A,AAAA,NS,MX,TXT,SOA,CNAME,CAA,DS`) |
@@ -110,6 +111,10 @@ Zone transfer: VULNERABLE via ns1.example.com (41 records)
 
 (`--json` adds a `sample` field with the first 5 transferred records.)
 
+`--json` output also carries the `resolver` IP and `timeout` used for the
+scan, and the text report prints them under the title, so a saved report
+always shows where its answers came from.
+
 ## How it works
 
 - **Wire protocol** (`dnsx/dns.py`): builds and parses DNS messages by
@@ -132,7 +137,7 @@ Zone transfer: VULNERABLE via ns1.example.com (41 records)
 python3 -m pytest tests/ -q
 ```
 
-31 tests, all hermetic: record parsing is checked against hand-built
+35 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.
