@@ -7,12 +7,14 @@ from typing import Any, Dict, List, Tuple, Optional
 
 # Constants
 A, NS, CNAME, SOA, MX, TXT, AAAA, AXFR, ANY = 1, 2, 5, 6, 15, 16, 28, 252, 255
+CAA, DS = 257, 43
 IN = 1
 
 # TYPE_* aliases (public surface used by dnsx.recon)
 TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR, TYPE_ANY = (
     A, NS, CNAME, SOA, MX, TXT, AAAA, AXFR, ANY,
 )
+TYPE_CAA, TYPE_DS = CAA, DS
 
 RCODE_MAP = {
     1: "Format Error",
@@ -135,6 +137,29 @@ def parse_record(message: bytes, offset: int) -> Tuple[Dict[str, Any], int]:
             res["data"] = {
                 "mname": mname, "rname": rname, "serial": ser,
                 "refresh": ref, "retry": ret, "expire": exp, "minimum": min_ttl
+            }
+        elif rtype == CAA:
+            # RFC 8659: flags (1B), tag length (1B), tag, value.
+            if len(rdata_raw) < 2:
+                raise ValueError("short CAA record")
+            flags = rdata_raw[0]
+            tag_len = rdata_raw[1]
+            if 2 + tag_len > len(rdata_raw):
+                raise ValueError("CAA tag overruns record")
+            tag = rdata_raw[2:2 + tag_len].decode("ascii")
+            value = rdata_raw[2 + tag_len:].decode("utf-8", "replace")
+            res["data"] = {"flags": flags, "tag": tag, "value": value}
+        elif rtype == DS:
+            # RFC 4034: key tag (2B), algorithm (1B), digest type (1B),
+            # digest (rest, kept as lowercase hex).
+            if len(rdata_raw) < 4:
+                raise ValueError("short DS record")
+            key_tag, alg, dtype = struct.unpack("!HBB", rdata_raw[:4])
+            res["data"] = {
+                "key_tag": key_tag,
+                "algorithm": alg,
+                "digest_type": dtype,
+                "digest": rdata_raw[4:].hex(),
             }
         else:
             res["raw"] = rdata_raw

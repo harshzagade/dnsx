@@ -1,5 +1,6 @@
 import sys
 import argparse
+from dnsx import __version__
 from dnsx.recon import Recon, RECORD_TYPES
 from dnsx.report import render_text, render_json
 from dnsx.dns import DnsError
@@ -13,12 +14,12 @@ def main(argv=None) -> int:
     parser.add_argument("--server", default="8.8.8.8", help="DNS server to use (default: 8.8.8.8)")
     parser.add_argument("--port", type=int, default=53, help="DNS server port (default: 53)")
     parser.add_argument("--timeout", type=float, default=5.0, help="Query timeout in seconds (default: 5.0)")
-    parser.add_argument("--types", default="A,AAAA,NS,MX,TXT,SOA", 
-                        help="Comma-separated record types (default: A,AAAA,NS,MX,TXT,SOA)")
+    parser.add_argument("--types", default="A,AAAA,NS,MX,TXT,SOA,CAA,DS",
+                        help="Comma-separated record types (default: A,AAAA,NS,MX,TXT,SOA,CAA,DS)")
     parser.add_argument("--json", action="store_true", help="Output in JSON format")
     parser.add_argument("--no-wildcard", action="store_true", help="Skip wildcard detection")
     parser.add_argument("--no-axfr", action="store_true", help="Skip zone transfer test")
-    parser.add_argument("--version", action="version", version="dnsx 1.0.0")
+    parser.add_argument("--version", action="version", version=f"dnsx {__version__}")
 
     args = parser.parse_args(argv)
 

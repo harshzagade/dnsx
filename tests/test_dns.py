@@ -3,7 +3,8 @@ import socket
 import struct
 from dnsx.dns import (
     encode_name, decode_name, build_query, parse_response, DnsClient,
-    DnsError, DnsTimeout, TYPE_A, TYPE_AAAA, TYPE_NS, TYPE_MX, TYPE_TXT, TYPE_SOA
+    DnsError, DnsTimeout, TYPE_A, TYPE_AAAA, TYPE_NS, TYPE_MX, TYPE_TXT, TYPE_SOA,
+    TYPE_CAA, TYPE_DS
 )
 from conftest import build_response, example_table
 
@@ -72,6 +73,41 @@ def test_parse_special_types():
     resp = build_query("x", 1, 1)[:12] + b"\x01x\x00" + struct.pack("!HH", 1, 1) + raw_rr
     resp = resp[:4] + struct.pack("!HHHH", 1, 1, 0, 0) + resp[12:]
     assert parse_response(resp, 1)["answers"][0]["raw"] == b"\xde\xad"
+
+def test_parse_caa_ds():
+    # CAA: flags=0, tag "issue", value "letsencrypt.org" (RFC 8659)
+    resp = build_response(1, "x", TYPE_CAA, [("CAA", (0, "issue", "letsencrypt.org"))])
+    assert parse_response(resp, 1)["answers"][0]["data"] == {
+        "flags": 0, "tag": "issue", "value": "letsencrypt.org",
+    }
+    # CAA with the critical flag set and an iodef tag
+    resp = build_response(1, "x", TYPE_CAA, [("CAA", (128, "iodef", "mailto:ops@example.com"))])
+    assert parse_response(resp, 1)["answers"][0]["data"] == {
+        "flags": 128, "tag": "iodef", "value": "mailto:ops@example.com",
+    }
+    # DS: key tag 12345, algorithm 8, digest type 2, SHA-256 digest (RFC 4034)
+    digest = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+    resp = build_response(1, "x", TYPE_DS, [("DS", (12345, 8, 2, digest))])
+    assert parse_response(resp, 1)["answers"][0]["data"] == {
+        "key_tag": 12345, "algorithm": 8, "digest_type": 2, "digest": digest,
+    }
+
+def _raw_response(rtype, rdata):
+    """Hand-built response with one answer RR carrying arbitrary rdata."""
+    raw_rr = b"\x01x\x00" + struct.pack("!HHIH", rtype, 1, 60, len(rdata)) + rdata
+    resp = build_query("x", 1, 1)[:12] + b"\x01x\x00" + struct.pack("!HH", 1, 1) + raw_rr
+    return resp[:4] + struct.pack("!HHHH", 1, 1, 0, 0) + resp[12:]
+
+def test_parse_caa_ds_malformed_falls_back_to_raw():
+    # CAA rdata too short to hold flags + tag length
+    resp = _raw_response(TYPE_CAA, b"\x00")
+    assert parse_response(resp, 1)["answers"][0]["raw"] == b"\x00"
+    # CAA tag length overruns the record
+    resp = _raw_response(TYPE_CAA, b"\x00\x05ab")
+    assert parse_response(resp, 1)["answers"][0]["raw"] == b"\x00\x05ab"
+    # DS rdata shorter than key-tag + algorithm + digest-type
+    resp = _raw_response(TYPE_DS, b"\x30\x39\x08")
+    assert parse_response(resp, 1)["answers"][0]["raw"] == b"\x30\x39\x08"
 
 def test_dns_client_logic(fake_dns_server):
     fake_dns_server["set"](example_table())

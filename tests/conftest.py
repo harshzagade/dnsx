@@ -14,12 +14,13 @@ import threading
 import pytest
 from dnsx.dns import (
     encode_name, decode_name, build_query, TYPE_A, TYPE_NS, TYPE_CNAME,
-    TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR
+    TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR, TYPE_CAA, TYPE_DS
 )
 
 _TYPE_BY_NAME = {
     "A": TYPE_A, "NS": TYPE_NS, "CNAME": TYPE_CNAME, "SOA": TYPE_SOA,
     "MX": TYPE_MX, "TXT": TYPE_TXT, "AAAA": TYPE_AAAA, "AXFR": TYPE_AXFR,
+    "CAA": TYPE_CAA, "DS": TYPE_DS,
 }
 
 
@@ -51,6 +52,13 @@ def build_response(qid, qname, qtype, answers, rcode=0, flags=0x8180):
         elif atype_str == "SOA":
             rdata = encode_name(adata[0]) + encode_name(adata[1])
             rdata += struct.pack("!IIIII", adata[2], adata[3], adata[4], adata[5], adata[6])
+        elif atype_str == "CAA":
+            # adata: (flags, tag, value)
+            tag = adata[1].encode("ascii")
+            rdata = struct.pack("!BB", adata[0], len(tag)) + tag + adata[2].encode()
+        elif atype_str == "DS":
+            # adata: (key_tag, algorithm, digest_type, digest_hex)
+            rdata = struct.pack("!HBB", adata[0], adata[1], adata[2]) + bytes.fromhex(adata[3])
 
         body += struct.pack("!H", len(rdata)) + rdata
     return header + body
@@ -267,6 +275,9 @@ def example_table():
         ("example.com", TYPE_MX): [("MX", (10, "mail.example.com."))],
         ("example.com", TYPE_TXT): [("TXT", ["v=spf1 -all"])],
         ("example.com", TYPE_SOA): [("SOA", soa_data)],
+        ("example.com", TYPE_CAA): [("CAA", (0, "issue", "letsencrypt.org"))],
+        ("example.com", TYPE_DS): [("DS", (12345, 8, 2,
+            "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"))],
         ("www.example.com", TYPE_A): [("A", "93.184.216.34")],
         # ns1 resolves to loopback so AXFR tests can reach the fake TCP server.
         ("ns1.example.com", TYPE_A): [("A", "127.0.0.1")],

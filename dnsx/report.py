@@ -4,7 +4,7 @@ from dnsx.recon import ReconResult, format_record, TYPE_NAMES
 def render_text(result: ReconResult) -> str:
     lines = [f"DnsX report for {result.domain}", ""]
     
-    order = ["A", "AAAA", "NS", "MX", "TXT", "SOA", "CNAME"]
+    order = ["A", "AAAA", "NS", "MX", "TXT", "SOA", "CNAME", "CAA", "DS"]
     for tname in order:
         recs = result.records.get(tname, [])
         if recs:

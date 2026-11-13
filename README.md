@@ -27,7 +27,7 @@ python3 -m dnsx --help
 ## Usage
 
 ```bash
-# Full recon: A, AAAA, NS, MX, TXT, SOA + wildcard check + zone-transfer test
+# Full recon: A, AAAA, NS, MX, TXT, SOA, CAA, DS + wildcard check + zone-transfer test
 python3 -m dnsx example.com
 
 # Only some record types, JSON output, custom resolver
@@ -48,7 +48,7 @@ Options:
 | `--server` | `8.8.8.8` | DNS resolver to query |
 | `--port` | `53` | Resolver port |
 | `--timeout` | `5.0` | Per-query timeout in seconds |
-| `--types` | `A,AAAA,NS,MX,TXT,SOA` | Comma-separated record types (`A,AAAA,NS,MX,TXT,SOA,CNAME`) |
+| `--types` | `A,AAAA,NS,MX,TXT,SOA,CAA,DS` | Comma-separated record types (`A,AAAA,NS,MX,TXT,SOA,CNAME,CAA,DS`) |
 | `--json` | off | Machine-readable JSON output |
 | `--no-wildcard` | off | Skip wildcard detection |
 | `--no-axfr` | off | Skip the zone-transfer test |
@@ -86,6 +86,12 @@ DnsX report for example.com
 [SOA]
   example.com           345s  elliott.ns.cloudflare.com dns.cloudflare.com serial=2418004112 refresh=10000 retry=2400 expire=604800 minimum=1800
 
+[CAA]
+  example.com           300s  0 issue "letsencrypt.org"
+
+[DS]
+  example.com           300s  12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F90A1B2C3D4E5F60718293A4B5C6D7E8F90
+
 [Wildcard]
 Wildcard DNS: not detected
 
@@ -108,7 +114,7 @@ Zone transfer: VULNERABLE via ns1.example.com (41 records)
 
 - **Wire protocol** (`dnsx/dns.py`): builds and parses DNS messages by
   hand — label encoding, compression pointers, and record decoding for
-  A, AAAA, NS, CNAME, MX, TXT, and SOA. UDP with automatic TCP fallback
+  A, AAAA, NS, CNAME, MX, TXT, SOA, CAA, and DS. UDP with automatic TCP fallback
   when the TC (truncated) bit is set; AXFR runs over TCP.
 - **Wildcard detection** (`dnsx/recon.py`): queries two random
   `dnsx<hex>.example.com` names. A wildcard is reported only when both
@@ -126,7 +132,7 @@ Zone transfer: VULNERABLE via ns1.example.com (41 records)
 python3 -m pytest tests/ -q
 ```
 
-27 tests, all hermetic: record parsing is checked against hand-built
+31 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.

@@ -1,5 +1,6 @@
 import pytest
 import json
+from dnsx import __version__
 from dnsx.cli import main
 from conftest import example_table, wild_table
 
@@ -8,7 +9,7 @@ def test_cli_version(capsys):
     with pytest.raises(SystemExit) as e:
         main(["--version"])
     assert e.value.code == 0
-    assert "dnsx 1.0.0" in capsys.readouterr().out
+    assert f"dnsx {__version__}" in capsys.readouterr().out
 
 
 def test_cli_basic(fake_dns_server, capsys):
@@ -22,6 +23,10 @@ def test_cli_basic(fake_dns_server, capsys):
     assert "93.184.216.34" in out
     assert "[MX]" in out
     assert "10 mail.example.com" in out
+    assert "[CAA]" in out
+    assert '0 issue "letsencrypt.org"' in out
+    assert "[DS]" in out
+    assert "12345 8 2" in out
 
 
 def test_cli_json(fake_dns_server, capsys):
@@ -31,6 +36,10 @@ def test_cli_json(fake_dns_server, capsys):
     data = json.loads(out)
     assert data["domain"] == "example.com"
     assert data["records"]["A"][0]["data"] == "93.184.216.34"
+    assert data["records"]["CAA"][0]["data"] == {"flags": 0, "tag": "issue", "value": "letsencrypt.org"}
+    assert data["records"]["DS"][0]["data"]["key_tag"] == 12345
+    assert data["records"]["DS"][0]["data"]["algorithm"] == 8
+    assert data["records"]["DS"][0]["data"]["digest_type"] == 2
 
 
 def test_cli_types_filter(fake_dns_server, capsys):

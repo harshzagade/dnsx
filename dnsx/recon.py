@@ -2,8 +2,9 @@ import time
 import secrets
 from dataclasses import dataclass, field
 from dnsx.dns import (
-    DnsClient, DnsError, 
-    TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA
+    DnsClient, DnsError,
+    TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA,
+    TYPE_CAA, TYPE_DS
 )
 
 RECORD_TYPES = {
@@ -13,7 +14,9 @@ RECORD_TYPES = {
     "MX": TYPE_MX,
     "TXT": TYPE_TXT,
     "SOA": TYPE_SOA,
-    "CNAME": TYPE_CNAME
+    "CNAME": TYPE_CNAME,
+    "CAA": TYPE_CAA,
+    "DS": TYPE_DS
 }
 
 TYPE_NAMES = {v: k for k, v in RECORD_TYPES.items()}
@@ -75,6 +78,19 @@ def format_record(record: dict) -> str:
                 f"serial={data[2]} refresh={data[3]} "
                 f"retry={data[4]} expire={data[5]} "
                 f"minimum={data[6]}")
+    if rtype == TYPE_CAA:
+        # Zone-file form: 0 issue "letsencrypt.org"
+        if isinstance(data, dict):
+            return (f"{data.get('flags')} {data.get('tag')} "
+                    f"\"{data.get('value')}\"")
+        return str(data)
+    if rtype == TYPE_DS:
+        # Zone-file form: key-tag algorithm digest-type DIGEST (upper hex)
+        if isinstance(data, dict):
+            return (f"{data.get('key_tag')} {data.get('algorithm')} "
+                    f"{data.get('digest_type')} "
+                    f"{str(data.get('digest')).upper()}")
+        return str(data)
     if isinstance(data, bytes):
         return repr(data)
     return str(data)
@@ -83,7 +99,7 @@ class Recon:
     def __init__(self, client=None, server="8.8.8.8", port=53, timeout=5.0):
         self.client = client or DnsClient(server=server, port=port, timeout=timeout)
 
-    def enumerate(self, domain: str, types=("A", "AAAA", "NS", "MX", "TXT", "SOA"), 
+    def enumerate(self, domain: str, types=("A", "AAAA", "NS", "MX", "TXT", "SOA", "CAA", "DS"),
                   do_wildcard: bool = True, do_axfr: bool = True) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()

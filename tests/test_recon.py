@@ -92,11 +92,35 @@ def test_recon_axfr_failover():
     assert res.zone_transfer["vulnerable"] is True
     assert res.zone_transfer["nameserver"] == "ns2.com."
 
+def test_recon_caa_ds():
+    routes = {
+        ("example.com", RECORD_TYPES["CAA"]): [
+            {"type": 257, "data": {"flags": 0, "tag": "issue", "value": "letsencrypt.org"},
+             "name": "example.com", "ttl": 60}],
+        ("example.com", RECORD_TYPES["DS"]): [
+            {"type": 43, "data": {"key_tag": 12345, "algorithm": 8, "digest_type": 2,
+                                 "digest": "aabbccdd"}, "name": "example.com", "ttl": 60}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("CAA", "DS"), do_wildcard=False, do_axfr=False)
+    assert res.records["CAA"][0]["data"]["tag"] == "issue"
+    assert res.records["DS"][0]["data"]["key_tag"] == 12345
+    assert format_record(res.records["CAA"][0]) == '0 issue "letsencrypt.org"'
+    assert format_record(res.records["DS"][0]) == "12345 8 2 AABBCCDD"
+
+def test_recon_default_types_include_caa_ds():
+    recon = Recon(client=StubClient())
+    res = recon.enumerate("example.com", do_wildcard=False, do_axfr=False)
+    assert "CAA" in res.records and "DS" in res.records
+    assert "A" in res.records and "SOA" in res.records
+
 def test_format_record():
     assert format_record({"type": 1, "data": "1.2.3.4"}) == "1.2.3.4"
     assert format_record({"type": 15, "data": (10, "mx.com")}) == "10 mx.com"
     assert format_record({"type": 16, "data": ["a", "b"]}) == "a b"
     assert "serial=2026" in format_record({"type": 6, "data": ("n", "h", 2026010101, 1, 1, 1, 1)})
+    assert format_record({"type": 257, "data": {"flags": 0, "tag": "issue", "value": "letsencrypt.org"}}) == '0 issue "letsencrypt.org"'
+    assert format_record({"type": 43, "data": {"key_tag": 12345, "algorithm": 8, "digest_type": 2, "digest": "abcdef"}}) == "12345 8 2 ABCDEF"
     assert "b'\\x01\\x02'" in format_record({"type": 99, "raw": b"\x01\x02"})
 
 def test_to_dict_serializable():
