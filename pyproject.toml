@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dnsx"
+version = "1.0.0"
+description = "Stdlib-only DNS recon: enumerate records, detect wildcards, test zone transfer."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Harsh Zagade", email = "harshnzagade@gmail.com"}]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+dnsx = "dnsx.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dnsx*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
