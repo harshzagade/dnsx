@@ -22,6 +22,7 @@ def main(argv=None) -> int:
     parser.add_argument("--json", action="store_true", help="Output in JSON format")
     parser.add_argument("--no-wildcard", action="store_true", help="Skip wildcard detection")
     parser.add_argument("--no-axfr", action="store_true", help="Skip zone transfer test")
+    parser.add_argument("--no-cname-chain", action="store_true", help="Skip CNAME chain following")
     parser.add_argument("--version", action="version", version=f"dnsx {__version__}")
 
     args = parser.parse_args(argv)
@@ -49,7 +50,8 @@ def main(argv=None) -> int:
             domain=args.domain,
             types=requested_types,
             do_wildcard=not args.no_wildcard,
-            do_axfr=not args.no_axfr
+            do_axfr=not args.no_axfr,
+            do_cname_chain=not args.no_cname_chain
         )
         
         if args.no_wildcard:

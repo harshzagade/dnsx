@@ -2,7 +2,20 @@ import pytest
 import json
 from dnsx import __version__
 from dnsx.cli import main
+from dnsx.dns import TYPE_A, TYPE_CNAME
 from conftest import example_table, wild_table
+
+
+def test_cli_cname_chain_end_to_end(fake_dns_server, capsys):
+    table = example_table()
+    table[("www.example.com", TYPE_CNAME)] = [("CNAME", "alias.example.com.")]
+    table[("alias.example.com", TYPE_A)] = [("A", "93.184.216.34")]
+    fake_dns_server["set"](table)
+    code = main(["www.example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--no-axfr"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "[CNAME chain]" in out
+    assert "www.example.com -> alias.example.com (93.184.216.34)" in out
 
 
 def test_cli_version(capsys):

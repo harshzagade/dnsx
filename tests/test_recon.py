@@ -147,6 +147,63 @@ def test_to_dict_serializable():
     d = res.to_dict()
     assert json.loads(json.dumps(d))["records"]["A"][0]["raw"] == "b'\\x01'"
 
+def test_recon_cname_chain_resolved():
+    routes = {
+        ("www.example.com", RECORD_TYPES["CNAME"]): [{"type": 5, "data": "cdn.example.net.", "name": "www.example.com", "ttl": 60}],
+        ("cdn.example.net", RECORD_TYPES["CNAME"]): [{"type": 5, "data": "edge.example.net.", "name": "cdn.example.net", "ttl": 60}],
+        ("edge.example.net", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34", "name": "edge.example.net", "ttl": 60}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("www.example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    chain = res.cname_chain
+    assert chain["status"] == "resolved"
+    assert chain["final"] == "edge.example.net"
+    assert chain["addresses"] == ["93.184.216.34"]
+    assert chain["hops"] == [
+        {"name": "www.example.com", "target": "cdn.example.net"},
+        {"name": "cdn.example.net", "target": "edge.example.net"},
+    ]
+    txt = render_text(res)
+    assert "www.example.com -> cdn.example.net -> edge.example.net (93.184.216.34)" in txt
+    assert json.loads(render_json(res))["cname_chain"]["status"] == "resolved"
+
+def test_recon_cname_chain_loop():
+    routes = {
+        ("a.example.com", RECORD_TYPES["CNAME"]): [{"type": 5, "data": "b.example.com."}],
+        ("b.example.com", RECORD_TYPES["CNAME"]): [{"type": 5, "data": "a.example.com."}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("a.example.com", types=(), do_wildcard=False, do_axfr=False)
+    assert res.cname_chain["status"] == "loop"
+    assert "loop detected" in render_text(res)
+
+def test_recon_cname_chain_dead_end():
+    routes = {
+        ("www.example.com", RECORD_TYPES["CNAME"]): [{"type": 5, "data": "gone.example.net."}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("www.example.com", types=(), do_wildcard=False, do_axfr=False)
+    assert res.cname_chain["status"] == "dead-end"
+    assert res.cname_chain["addresses"] == []
+    assert "no A/AAAA records at gone.example.net" in render_text(res)
+
+def test_recon_no_cname_chain_when_plain_a():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "1.2.3.4"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    assert res.cname_chain is None
+    assert "[CNAME chain]" not in render_text(res)
+
+def test_recon_cname_chain_skipped_by_flag():
+    routes = {
+        ("www.example.com", RECORD_TYPES["CNAME"]): [{"type": 5, "data": "cdn.example.net."}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("www.example.com", types=(), do_wildcard=False, do_axfr=False, do_cname_chain=False)
+    assert res.cname_chain is None
+
 def test_recon_invalid_domain():
     recon = Recon(client=StubClient())
     with pytest.raises(ValueError): recon.enumerate("", types=())

@@ -20,6 +20,21 @@ def render_text(result: ReconResult) -> str:
                 lines.append(f"  {r.get('name', ''):<20}  {r.get('ttl', '?')}s  {fmt}")
             lines.append("")
 
+    if result.cname_chain:
+        chain = result.cname_chain
+        lines.append("[CNAME chain]")
+        path = [chain["hops"][0]["name"]] + [h["target"] for h in chain["hops"]]
+        status = chain["status"]
+        if status == "resolved":
+            lines.append(f"{' -> '.join(path)} ({', '.join(chain['addresses'])})")
+        elif status == "dead-end":
+            lines.append(f"{' -> '.join(path)} (no A/AAAA records at {chain['final']})")
+        elif status == "loop":
+            lines.append(f"{' -> '.join(path)} (loop detected)")
+        else:  # too-long
+            lines.append(f"{' -> '.join(path)} (chain longer than 10 hops)")
+        lines.append("")
+
     if result.wildcard:
         lines.append("[Wildcard]")
         if result.wildcard.get("detected"):

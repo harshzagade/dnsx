@@ -53,6 +53,7 @@ Options:
 | `--json` | off | Machine-readable JSON output |
 | `--no-wildcard` | off | Skip wildcard detection |
 | `--no-axfr` | off | Skip the zone-transfer test |
+| `--no-cname-chain` | off | Skip CNAME chain following |
 | `--version` | — | Print version and exit |
 
 Exit codes: `0` clean run, `1` DNS/network error, `2` bad arguments or
@@ -111,6 +112,18 @@ Zone transfer: VULNERABLE via ns1.example.com (41 records)
 
 (`--json` adds a `sample` field with the first 5 transferred records.)
 
+A CNAME'd name gets its chain followed to the final address:
+
+```text
+[CNAME chain]
+www.example.com -> cdn.example.net -> edge.example.net (93.184.216.34)
+```
+
+A chain that ends at a name with no A/AAAA records is reported as a
+dead end, and a cycle (or a chain longer than 10 hops) is flagged
+instead of followed forever. `--json` carries the same data as a
+`cname_chain` object with `hops`, `final`, `addresses`, and `status`.
+
 `--json` output also carries the `resolver` IP and `timeout` used for the
 scan, and the text report prints them under the title, so a saved report
 always shows where its answers came from.
@@ -128,6 +141,9 @@ always shows where its answers came from.
 - **Zone-transfer test** (`dnsx/recon.py`): tries AXFR against each
   nameserver in turn (max 3) and reports the first one that hands over
   the zone.
+- **CNAME chain following** (`dnsx/recon.py`): when the target returns a
+  CNAME, each hop is followed (max 10, cycles detected) until the final
+  A/AAAA answer, and every hop is shown in the report.
 - **Output** (`dnsx/report.py`): plain-text report for humans, `--json`
   for pipelines.
 

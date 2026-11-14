@@ -32,6 +32,7 @@ class ReconResult:
     duration_seconds: float = 0.0
     resolver: str | None = None
     timeout: float | None = None
+    cname_chain: dict | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -54,7 +55,8 @@ class ReconResult:
             "zone_transfer": self.zone_transfer,
             "duration_seconds": round(self.duration_seconds, 3),
             "resolver": self.resolver,
-            "timeout": self.timeout
+            "timeout": self.timeout,
+            "cname_chain": self.cname_chain
         }
 
 def format_record(record: dict) -> str:
@@ -104,7 +106,8 @@ class Recon:
         self.client = client or DnsClient(server=server, port=port, timeout=timeout)
 
     def enumerate(self, domain: str, types=("A", "AAAA", "NS", "MX", "TXT", "SOA", "CAA", "DS"),
-                  do_wildcard: bool = True, do_axfr: bool = True) -> ReconResult:
+                  do_wildcard: bool = True, do_axfr: bool = True,
+                  do_cname_chain: bool = True) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()
         if not domain or " " in domain:
@@ -129,7 +132,9 @@ class Recon:
                 result.records[tname] = []
 
         self._get_nameservers(domain, result, last_resp)
-        
+
+        if do_cname_chain:
+            self._follow_cname_chain(domain, result)
         if do_wildcard:
             self._check_wildcard(domain, result)
         if do_axfr:
@@ -137,6 +142,65 @@ class Recon:
 
         result.duration_seconds = time.perf_counter() - start_time
         return result
+
+    # A chain longer than this is treated as misconfigured rather than
+    # followed forever (a cycle is caught earlier by the visited set).
+    MAX_CNAME_HOPS = 10
+
+    def _follow_cname_chain(self, domain, result):
+        """Follow a CNAME chain from `domain` to its final A/AAAA answer.
+
+        Sets result.cname_chain to {"hops", "final", "addresses", "status"}
+        when the domain returns a CNAME; leaves it None when there is no
+        CNAME to follow, so reports stay clean for plain A-record domains.
+        Status is "resolved" (final name has A/AAAA), "dead-end" (final
+        name answers nothing), "loop" (a target repeats) or "too-long".
+        """
+        try:
+            resp = self.client.query(domain, TYPE_CNAME)
+            first = [r for r in resp.get("answers", []) if r.get("type") == TYPE_CNAME]
+        except DnsError:
+            return
+        if not first:
+            return
+
+        hops = []
+        visited = {domain}
+        current = domain
+        target = str(first[0]["data"]).rstrip(".")
+        while True:
+            hops.append({"name": current, "target": target})
+            if target in visited:
+                result.cname_chain = {"hops": hops, "final": target,
+                                      "addresses": [], "status": "loop"}
+                return
+            visited.add(target)
+            if len(hops) >= self.MAX_CNAME_HOPS:
+                result.cname_chain = {"hops": hops, "final": target,
+                                      "addresses": [], "status": "too-long"}
+                return
+            current = target
+            try:
+                resp = self.client.query(current, TYPE_CNAME)
+                nxt = [r for r in resp.get("answers", []) if r.get("type") == TYPE_CNAME]
+            except DnsError:
+                nxt = []
+            if nxt:
+                target = str(nxt[0]["data"]).rstrip(".")
+                continue
+            addresses = []
+            for qtype in (TYPE_A, TYPE_AAAA):
+                try:
+                    resp = self.client.query(current, qtype)
+                    addresses += [r["data"] for r in resp.get("answers", [])
+                                  if r.get("type") == qtype]
+                except DnsError:
+                    continue
+            result.cname_chain = {
+                "hops": hops, "final": current, "addresses": addresses,
+                "status": "resolved" if addresses else "dead-end",
+            }
+            return
 
     def _get_nameservers(self, domain, result, last_resp):
         ns_list = []
