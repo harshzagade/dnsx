@@ -2,7 +2,7 @@ import pytest
 import json
 from dnsx import __version__
 from dnsx.cli import main
-from dnsx.dns import TYPE_A, TYPE_CNAME
+from dnsx.dns import TYPE_A, TYPE_CNAME, TYPE_TXT
 from conftest import example_table, wild_table
 
 
@@ -16,6 +16,18 @@ def test_cli_cname_chain_end_to_end(fake_dns_server, capsys):
     out = capsys.readouterr().out
     assert "[CNAME chain]" in out
     assert "www.example.com -> alias.example.com (93.184.216.34)" in out
+
+
+def test_cli_mail_auth_end_to_end(fake_dns_server, capsys):
+    table = example_table()
+    table[("_dmarc.example.com", TYPE_TXT)] = [("TXT", ["v=DMARC1; p=quarantine"])]
+    table[("google._domainkey.example.com", TYPE_TXT)] = [("TXT", ["v=DKIM1; k=rsa; p=abc"])]
+    fake_dns_server["set"](table)
+    code = main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--no-axfr"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "[Mail auth]" in out
+    assert "SPF: -all | DMARC: p=quarantine | DKIM: google" in out
 
 
 def test_cli_version(capsys):

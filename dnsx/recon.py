@@ -33,6 +33,7 @@ class ReconResult:
     resolver: str | None = None
     timeout: float | None = None
     cname_chain: dict | None = None
+    mail_auth: dict | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -56,7 +57,8 @@ class ReconResult:
             "duration_seconds": round(self.duration_seconds, 3),
             "resolver": self.resolver,
             "timeout": self.timeout,
-            "cname_chain": self.cname_chain
+            "cname_chain": self.cname_chain,
+            "mail_auth": self.mail_auth
         }
 
 def format_record(record: dict) -> str:
@@ -101,13 +103,54 @@ def format_record(record: dict) -> str:
         return repr(data)
     return str(data)
 
+def parse_spf_record(text: str) -> dict | None:
+    """Parse a v=spf1 TXT record: the `all` qualifier and include: list.
+
+    Returns None when the text is not an SPF record. A bare `all` (no
+    qualifier) is normalized to "+all".
+    """
+    if not text.strip().lower().startswith("v=spf1"):
+        return None
+    policy = None
+    includes = []
+    for tok in text.split()[1:]:
+        low = tok.lower()
+        if low.startswith("include:"):
+            includes.append(tok.split(":", 1)[1])
+        elif low in ("all", "+all", "-all", "~all", "?all"):
+            policy = "+all" if low == "all" else low
+    return {"record": text, "policy": policy, "includes": includes}
+
+
+def parse_dmarc_record(text: str) -> dict | None:
+    """Parse a v=DMARC1 TXT record: the p= and sp= policies."""
+    if not text.strip().lower().startswith("v=dmarc1"):
+        return None
+    tags = {}
+    for part in text.split(";"):
+        part = part.strip()
+        if "=" in part:
+            key, value = part.split("=", 1)
+            tags[key.strip().lower()] = value.strip()
+    return {"record": text, "policy": tags.get("p"),
+            "subdomain_policy": tags.get("sp")}
+
+
+def _txt_strings(record: dict) -> str:
+    """Join a TXT record's character-strings (they concatenate directly)."""
+    data = record.get("data")
+    if isinstance(data, list):
+        return "".join(data)
+    return str(data or "")
+
+
 class Recon:
     def __init__(self, client=None, server="8.8.8.8", port=53, timeout=5.0):
         self.client = client or DnsClient(server=server, port=port, timeout=timeout)
 
     def enumerate(self, domain: str, types=("A", "AAAA", "NS", "MX", "TXT", "SOA", "CAA", "DS"),
                   do_wildcard: bool = True, do_axfr: bool = True,
-                  do_cname_chain: bool = True) -> ReconResult:
+                  do_cname_chain: bool = True, do_mail_auth: bool = True) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()
         if not domain or " " in domain:
@@ -135,6 +178,8 @@ class Recon:
 
         if do_cname_chain:
             self._follow_cname_chain(domain, result)
+        if do_mail_auth:
+            self._check_mail_auth(domain, result)
         if do_wildcard:
             self._check_wildcard(domain, result)
         if do_axfr:
@@ -201,6 +246,50 @@ class Recon:
                 "status": "resolved" if addresses else "dead-end",
             }
             return
+
+    # Well-known DKIM selector names probed for a published key. There is
+    # no way to enumerate selectors from DNS itself, so a fixed list of the
+    # common ones is the honest approach (documented in the README).
+    DKIM_SELECTORS = ("default", "google", "selector1", "selector2",
+                      "mail", "dkim", "k1", "s1")
+
+    def _check_mail_auth(self, domain, result):
+        """Summarize the domain's mail authentication posture.
+
+        SPF comes from the already-fetched TXT records; DMARC from
+        _dmarc.<domain>; DKIM from probing the well-known selectors above
+        for a v=DKIM1 key. Sets result.mail_auth to {"spf", "dmarc",
+        "dkim"} with None / empty values where nothing was published.
+        """
+        spf = None
+        for rec in result.records.get("TXT", []):
+            spf = parse_spf_record(_txt_strings(rec))
+            if spf:
+                break
+
+        dmarc = None
+        try:
+            resp = self.client.query(f"_dmarc.{domain}", TYPE_TXT)
+            for rec in resp.get("answers", []):
+                dmarc = parse_dmarc_record(_txt_strings(rec))
+                if dmarc:
+                    break
+        except DnsError:
+            pass
+
+        selectors = []
+        for sel in self.DKIM_SELECTORS:
+            try:
+                resp = self.client.query(f"{sel}._domainkey.{domain}", TYPE_TXT)
+            except DnsError:
+                continue
+            for rec in resp.get("answers", []):
+                if _txt_strings(rec).strip().lower().startswith("v=dkim1"):
+                    selectors.append(sel)
+                    break
+
+        result.mail_auth = {"spf": spf, "dmarc": dmarc,
+                            "dkim": {"selectors": selectors}}
 
     def _get_nameservers(self, domain, result, last_resp):
         ns_list = []

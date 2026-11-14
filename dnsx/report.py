@@ -20,6 +20,29 @@ def render_text(result: ReconResult) -> str:
                 lines.append(f"  {r.get('name', ''):<20}  {r.get('ttl', '?')}s  {fmt}")
             lines.append("")
 
+    if result.mail_auth is not None:
+        auth = result.mail_auth
+        lines.append("[Mail auth]")
+        spf = auth.get("spf")
+        if spf:
+            spf_part = f"SPF: {spf['policy'] or 'no-all'}"
+            if spf["includes"]:
+                n = len(spf["includes"])
+                spf_part += f" ({n} include{'s' if n != 1 else ''}: {', '.join(spf['includes'])})"
+        else:
+            spf_part = "SPF: none"
+        dmarc = auth.get("dmarc")
+        if dmarc and dmarc.get("policy"):
+            dmarc_part = f"DMARC: p={dmarc['policy']}"
+            if dmarc.get("subdomain_policy"):
+                dmarc_part += f" (sp={dmarc['subdomain_policy']})"
+        else:
+            dmarc_part = "DMARC: none"
+        selectors = auth.get("dkim", {}).get("selectors", [])
+        dkim_part = f"DKIM: {', '.join(selectors)}" if selectors else "DKIM: none"
+        lines.append(f"{spf_part} | {dmarc_part} | {dkim_part}")
+        lines.append("")
+
     if result.cname_chain:
         chain = result.cname_chain
         lines.append("[CNAME chain]")

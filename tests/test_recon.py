@@ -1,7 +1,8 @@
 import pytest
 import json
 from dnsx.dns import DnsError, TYPE_A, TYPE_NS, TYPE_SOA
-from dnsx.recon import Recon, ReconResult, format_record, RECORD_TYPES
+from dnsx.recon import (Recon, ReconResult, format_record, RECORD_TYPES,
+                        parse_spf_record, parse_dmarc_record)
 from dnsx.report import render_text, render_json
 
 class StubClient:
@@ -203,6 +204,70 @@ def test_recon_cname_chain_skipped_by_flag():
     recon = Recon(client=StubClient(routes))
     res = recon.enumerate("www.example.com", types=(), do_wildcard=False, do_axfr=False, do_cname_chain=False)
     assert res.cname_chain is None
+
+def test_parse_spf_record():
+    parsed = parse_spf_record("v=spf1 include:_spf.google.com include:mailgun.org -all")
+    assert parsed["policy"] == "-all"
+    assert parsed["includes"] == ["_spf.google.com", "mailgun.org"]
+    assert parse_spf_record("v=spf1 ~all")["policy"] == "~all"
+    assert parse_spf_record("v=spf1 all")["policy"] == "+all"
+    assert parse_spf_record("v=spf1 mx -all")["includes"] == []
+    assert parse_spf_record("v=spf1 -all")["policy"] == "-all"
+    assert parse_spf_record("not spf") is None
+    assert parse_spf_record("v=spf1")["policy"] is None
+
+
+def test_parse_dmarc_record():
+    parsed = parse_dmarc_record("v=DMARC1; p=reject; sp=quarantine; rua=mailto:dmarc@example.com")
+    assert parsed["policy"] == "reject"
+    assert parsed["subdomain_policy"] == "quarantine"
+    assert parse_dmarc_record("v=DMARC1; p=none")["subdomain_policy"] is None
+    assert parse_dmarc_record("v=spf1 -all") is None
+
+
+def test_recon_mail_auth_present():
+    routes = {
+        ("example.com", RECORD_TYPES["TXT"]): [
+            {"type": 16, "data": ["v=spf1 include:_spf.google.com include:mailgun.org -all"]}],
+        ("_dmarc.example.com", RECORD_TYPES["TXT"]): [
+            {"type": 16, "data": ["v=DMARC1; p=reject; sp=quarantine"]}],
+        ("google._domainkey.example.com", RECORD_TYPES["TXT"]): [
+            {"type": 16, "data": ["v=DKIM1; k=rsa; p=abc"]}],
+        ("selector1._domainkey.example.com", RECORD_TYPES["TXT"]): [
+            {"type": 16, "data": ["v=DKIM1; k=rsa; p=def"]}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("TXT",), do_wildcard=False, do_axfr=False)
+    auth = res.mail_auth
+    assert auth["spf"]["policy"] == "-all"
+    assert auth["spf"]["includes"] == ["_spf.google.com", "mailgun.org"]
+    assert auth["dmarc"]["policy"] == "reject"
+    assert auth["dmarc"]["subdomain_policy"] == "quarantine"
+    assert auth["dkim"]["selectors"] == ["google", "selector1"]
+    txt = render_text(res)
+    assert "SPF: -all (2 includes: _spf.google.com, mailgun.org) | DMARC: p=reject (sp=quarantine) | DKIM: google, selector1" in txt
+    assert json.loads(render_json(res))["mail_auth"]["dmarc"]["policy"] == "reject"
+
+
+def test_recon_mail_auth_absent():
+    recon = Recon(client=StubClient())
+    res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=False)
+    auth = res.mail_auth
+    assert auth["spf"] is None
+    assert auth["dmarc"] is None
+    assert auth["dkim"]["selectors"] == []
+    assert "SPF: none | DMARC: none | DKIM: none" in render_text(res)
+
+
+def test_recon_mail_auth_skipped_by_flag():
+    routes = {
+        ("example.com", RECORD_TYPES["TXT"]): [
+            {"type": 16, "data": ["v=spf1 -all"]}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("TXT",), do_wildcard=False, do_axfr=False, do_mail_auth=False)
+    assert res.mail_auth is None
+    assert "[Mail auth]" not in render_text(res)
 
 def test_recon_invalid_domain():
     recon = Recon(client=StubClient())

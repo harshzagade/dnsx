@@ -54,6 +54,7 @@ Options:
 | `--no-wildcard` | off | Skip wildcard detection |
 | `--no-axfr` | off | Skip the zone-transfer test |
 | `--no-cname-chain` | off | Skip CNAME chain following |
+| `--no-mail-auth` | off | Skip the SPF/DKIM/DMARC summary |
 | `--version` | — | Print version and exit |
 
 Exit codes: `0` clean run, `1` DNS/network error, `2` bad arguments or
@@ -112,6 +113,24 @@ Zone transfer: VULNERABLE via ns1.example.com (41 records)
 
 (`--json` adds a `sample` field with the first 5 transferred records.)
 
+Every report ends with a one-line mail-authentication summary built from
+the domain's own records:
+
+```text
+[Mail auth]
+SPF: -all (2 includes: _spf.google.com, mailgun.org) | DMARC: p=reject (sp=quarantine) | DKIM: google, selector1
+```
+
+SPF is parsed from the domain's TXT records (`v=spf1`, the `all`
+qualifier and the `include:` list); DMARC from `_dmarc.<domain>`
+(`p=` and `sp=`); DKIM by probing eight well-known selectors
+(`default`, `google`, `selector1`, `selector2`, `mail`, `dkim`, `k1`,
+`s1`) under `_domainkey.<domain>` for a published `v=DKIM1` key.
+Selectors cannot be enumerated from DNS, so a domain using an unusual
+selector name simply shows fewer (or no) DKIM selectors — the check
+reports what it finds, never guesses. `--json` carries the same data
+as a `mail_auth` object.
+
 A CNAME'd name gets its chain followed to the final address:
 
 ```text
@@ -144,6 +163,9 @@ always shows where its answers came from.
 - **CNAME chain following** (`dnsx/recon.py`): when the target returns a
   CNAME, each hop is followed (max 10, cycles detected) until the final
   A/AAAA answer, and every hop is shown in the report.
+- **Mail-auth summary** (`dnsx/recon.py`): parses SPF from TXT, DMARC
+  from `_dmarc`, and probes well-known DKIM selectors for a published
+  key, printed as one summary line.
 - **Output** (`dnsx/report.py`): plain-text report for humans, `--json`
   for pipelines.
 
@@ -153,7 +175,7 @@ always shows where its answers came from.
 python3 -m pytest tests/ -q
 ```
 
-35 tests, all hermetic: record parsing is checked against hand-built
+47 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.
