@@ -58,6 +58,12 @@ def render_text(result: ReconResult) -> str:
             lines.append(f"{' -> '.join(path)} (chain longer than 10 hops)")
         lines.append("")
 
+    if result.reverse_dns and result.reverse_dns.get("lookups"):
+        lines.append("[Reverse DNS]")
+        for ip, ptr in result.reverse_dns["lookups"].items():
+            lines.append(f"  {ip} -> {ptr if ptr else '(no PTR record)'}")
+        lines.append("")
+
     if result.wildcard:
         lines.append("[Wildcard]")
         if result.wildcard.get("detected"):

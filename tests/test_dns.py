@@ -4,7 +4,7 @@ import struct
 from dnsx.dns import (
     encode_name, decode_name, build_query, parse_response, DnsClient,
     DnsError, DnsTimeout, TYPE_A, TYPE_AAAA, TYPE_NS, TYPE_MX, TYPE_TXT, TYPE_SOA,
-    TYPE_CAA, TYPE_DS
+    TYPE_CAA, TYPE_DS, TYPE_PTR
 )
 from conftest import build_response, example_table
 
@@ -108,6 +108,11 @@ def test_parse_caa_ds_malformed_falls_back_to_raw():
     # DS rdata shorter than key-tag + algorithm + digest-type
     resp = _raw_response(TYPE_DS, b"\x30\x39\x08")
     assert parse_response(resp, 1)["answers"][0]["raw"] == b"\x30\x39\x08"
+
+def test_parse_ptr():
+    resp = build_response(1, "34.216.184.93.in-addr.arpa", TYPE_PTR, [("PTR", "example.com.")])
+    assert parse_response(resp, 1)["answers"][0]["data"] == "example.com"
+
 
 def test_dns_client_logic(fake_dns_server):
     fake_dns_server["set"](example_table())

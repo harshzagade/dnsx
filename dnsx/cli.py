@@ -24,6 +24,7 @@ def main(argv=None) -> int:
     parser.add_argument("--no-axfr", action="store_true", help="Skip zone transfer test")
     parser.add_argument("--no-cname-chain", action="store_true", help="Skip CNAME chain following")
     parser.add_argument("--no-mail-auth", action="store_true", help="Skip the SPF/DKIM/DMARC summary")
+    parser.add_argument("--no-reverse-dns", action="store_true", help="Skip reverse DNS (PTR) lookups")
     parser.add_argument("--version", action="version", version=f"dnsx {__version__}")
 
     args = parser.parse_args(argv)
@@ -53,7 +54,8 @@ def main(argv=None) -> int:
             do_wildcard=not args.no_wildcard,
             do_axfr=not args.no_axfr,
             do_cname_chain=not args.no_cname_chain,
-            do_mail_auth=not args.no_mail_auth
+            do_mail_auth=not args.no_mail_auth,
+            do_reverse_dns=not args.no_reverse_dns
         )
         
         if args.no_wildcard:

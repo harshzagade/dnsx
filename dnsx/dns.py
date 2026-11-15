@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 # Constants
 A, NS, CNAME, SOA, MX, TXT, AAAA, AXFR, ANY = 1, 2, 5, 6, 15, 16, 28, 252, 255
+PTR = 12
 CAA, DS = 257, 43
 IN = 1
 
@@ -14,6 +15,7 @@ IN = 1
 TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR, TYPE_ANY = (
     A, NS, CNAME, SOA, MX, TXT, AAAA, AXFR, ANY,
 )
+TYPE_PTR = PTR
 TYPE_CAA, TYPE_DS = CAA, DS
 
 RCODE_MAP = {
@@ -116,7 +118,7 @@ def parse_record(message: bytes, offset: int) -> Tuple[Dict[str, Any], int]:
             res["data"] = str(ipaddress.IPv4Address(rdata_raw))
         elif rtype == AAAA:
             res["data"] = ipaddress.IPv6Address(rdata_raw).compressed
-        elif rtype in (NS, CNAME):
+        elif rtype in (NS, CNAME, PTR):
             res["data"], _ = decode_name(message, rdata_start)
         elif rtype == MX:
             pref = struct.unpack("!H", rdata_raw[:2])[0]

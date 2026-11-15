@@ -55,6 +55,7 @@ Options:
 | `--no-axfr` | off | Skip the zone-transfer test |
 | `--no-cname-chain` | off | Skip CNAME chain following |
 | `--no-mail-auth` | off | Skip the SPF/DKIM/DMARC summary |
+| `--no-reverse-dns` | off | Skip reverse DNS (PTR) lookups |
 | `--version` | — | Print version and exit |
 
 Exit codes: `0` clean run, `1` DNS/network error, `2` bad arguments or
@@ -138,6 +139,20 @@ A CNAME'd name gets its chain followed to the final address:
 www.example.com -> cdn.example.net -> edge.example.net (93.184.216.34)
 ```
 
+Every IP found in the A/AAAA records gets a reverse lookup, so the
+report shows which names the addresses point back to:
+
+```text
+[Reverse DNS]
+  93.184.216.34 -> example.com
+  2606:2800:220:1:248:1893:25c8:1946 -> (no PTR record)
+```
+
+IPv4 addresses query `<reversed>.in-addr.arpa`, IPv6 the nibble-reversed
+`ip6.arpa` name; an address with no PTR record is shown as such, never
+as an error. `--json` carries the same data as a `reverse_dns` object
+mapping each IP to its PTR name (or `null`).
+
 A chain that ends at a name with no A/AAAA records is reported as a
 dead end, and a cycle (or a chain longer than 10 hops) is flagged
 instead of followed forever. `--json` carries the same data as a
@@ -169,6 +184,10 @@ always shows where its answers came from.
 - **Mail-auth summary** (`dnsx/recon.py`): parses SPF from TXT, DMARC
   from `_dmarc`, and probes well-known DKIM selectors for a published
   key, printed as one summary line.
+- **Reverse DNS** (`dnsx/recon.py`): PTR lookup for every IP in the
+  enumerated A/AAAA records (`in-addr.arpa` for IPv4, nibble-reversed
+  `ip6.arpa` for IPv6), shown as an ip -> name mapping with missing
+  PTR records marked, not errored on.
 - **Output** (`dnsx/report.py`): plain-text report for humans, `--json`
   for pipelines.
 
@@ -178,7 +197,7 @@ always shows where its answers came from.
 python3 -m pytest tests/ -q
 ```
 
-50 tests, all hermetic: record parsing is checked against hand-built
+56 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.

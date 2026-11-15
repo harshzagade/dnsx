@@ -14,13 +14,14 @@ import threading
 import pytest
 from dnsx.dns import (
     encode_name, decode_name, build_query, TYPE_A, TYPE_NS, TYPE_CNAME,
-    TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR, TYPE_CAA, TYPE_DS
+    TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR, TYPE_CAA, TYPE_DS,
+    TYPE_PTR
 )
 
 _TYPE_BY_NAME = {
     "A": TYPE_A, "NS": TYPE_NS, "CNAME": TYPE_CNAME, "SOA": TYPE_SOA,
     "MX": TYPE_MX, "TXT": TYPE_TXT, "AAAA": TYPE_AAAA, "AXFR": TYPE_AXFR,
-    "CAA": TYPE_CAA, "DS": TYPE_DS,
+    "CAA": TYPE_CAA, "DS": TYPE_DS, "PTR": TYPE_PTR,
 }
 
 
@@ -41,7 +42,7 @@ def build_response(qid, qname, qtype, answers, rcode=0, flags=0x8180):
             rdata = socket.inet_aton(adata)
         elif atype_str == "AAAA":
             rdata = socket.inet_pton(socket.AF_INET6, adata)
-        elif atype_str in ("NS", "CNAME"):
+        elif atype_str in ("NS", "CNAME", "PTR"):
             rdata = encode_name(adata)
         elif atype_str == "MX":
             rdata = struct.pack("!H", adata[0]) + encode_name(adata[1])

@@ -1,6 +1,6 @@
 import pytest
 import json
-from dnsx.dns import DnsError, TYPE_A, TYPE_NS, TYPE_SOA
+from dnsx.dns import DnsError, TYPE_A, TYPE_NS, TYPE_SOA, TYPE_PTR
 from dnsx.recon import (Recon, ReconResult, format_record, RECORD_TYPES,
                         parse_spf_record, parse_dmarc_record)
 from dnsx.report import render_text, render_json
@@ -141,6 +141,7 @@ def test_format_record():
     assert "serial=2026" in format_record({"type": 6, "data": ("n", "h", 2026010101, 1, 1, 1, 1)})
     assert format_record({"type": 257, "data": {"flags": 0, "tag": "issue", "value": "letsencrypt.org"}}) == '0 issue "letsencrypt.org"'
     assert format_record({"type": 43, "data": {"key_tag": 12345, "algorithm": 8, "digest_type": 2, "digest": "abcdef"}}) == "12345 8 2 ABCDEF"
+    assert format_record({"type": 12, "data": "example.com."}) == "example.com."
     assert "b'\\x01\\x02'" in format_record({"type": 99, "raw": b"\x01\x02"})
 
 def test_to_dict_serializable():
@@ -268,6 +269,51 @@ def test_recon_mail_auth_skipped_by_flag():
     res = recon.enumerate("example.com", types=("TXT",), do_wildcard=False, do_axfr=False, do_mail_auth=False)
     assert res.mail_auth is None
     assert "[Mail auth]" not in render_text(res)
+
+def test_recon_reverse_dns_resolved():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+        ("example.com", RECORD_TYPES["AAAA"]): [{"type": 28, "data": "2001:db8::1"}],
+        ("34.216.184.93.in-addr.arpa", TYPE_PTR): [{"type": 12, "data": "example.com."}],
+        ("1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa", TYPE_PTR):
+            [{"type": 12, "data": "v6.example.com."}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A", "AAAA"), do_wildcard=False, do_axfr=False)
+    assert res.reverse_dns == {"lookups": {"93.184.216.34": "example.com.",
+                                           "2001:db8::1": "v6.example.com."}}
+    txt = render_text(res)
+    assert "93.184.216.34 -> example.com." in txt
+    assert "2001:db8::1 -> v6.example.com." in txt
+    assert json.loads(render_json(res))["reverse_dns"]["lookups"]["93.184.216.34"] == "example.com."
+
+
+def test_recon_reverse_dns_missing_ptr():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    assert res.reverse_dns == {"lookups": {"93.184.216.34": None}}
+    assert "93.184.216.34 -> (no PTR record)" in render_text(res)
+
+
+def test_recon_reverse_dns_no_ips():
+    recon = Recon(client=StubClient())
+    res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=False)
+    assert res.reverse_dns == {"lookups": {}}
+    assert "[Reverse DNS]" not in render_text(res)
+
+
+def test_recon_reverse_dns_skipped_by_flag():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False, do_reverse_dns=False)
+    assert res.reverse_dns is None
+    assert "[Reverse DNS]" not in render_text(res)
+
 
 def test_recon_invalid_domain():
     recon = Recon(client=StubClient())

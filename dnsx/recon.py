@@ -1,10 +1,11 @@
 import time
 import secrets
+import ipaddress
 from dataclasses import dataclass, field
 from dnsx.dns import (
     DnsClient, DnsError,
     TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA,
-    TYPE_CAA, TYPE_DS
+    TYPE_CAA, TYPE_DS, TYPE_PTR
 )
 
 RECORD_TYPES = {
@@ -35,6 +36,7 @@ class ReconResult:
     cname_chain: dict | None = None
     mail_auth: dict | None = None
     tcp_fallbacks: int = 0
+    reverse_dns: dict | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -60,7 +62,8 @@ class ReconResult:
             "timeout": self.timeout,
             "cname_chain": self.cname_chain,
             "mail_auth": self.mail_auth,
-            "tcp_fallbacks": self.tcp_fallbacks
+            "tcp_fallbacks": self.tcp_fallbacks,
+            "reverse_dns": self.reverse_dns
         }
 
 def format_record(record: dict) -> str:
@@ -68,7 +71,7 @@ def format_record(record: dict) -> str:
     data = record.get("data")
     if "raw" in record:
         return repr(record["raw"])
-    if rtype in (TYPE_A, TYPE_AAAA, TYPE_NS, TYPE_CNAME):
+    if rtype in (TYPE_A, TYPE_AAAA, TYPE_NS, TYPE_CNAME, TYPE_PTR):
         return str(data)
     if rtype == TYPE_MX:
         if isinstance(data, dict):
@@ -152,7 +155,8 @@ class Recon:
 
     def enumerate(self, domain: str, types=("A", "AAAA", "NS", "MX", "TXT", "SOA", "CAA", "DS"),
                   do_wildcard: bool = True, do_axfr: bool = True,
-                  do_cname_chain: bool = True, do_mail_auth: bool = True) -> ReconResult:
+                  do_cname_chain: bool = True, do_mail_auth: bool = True,
+                  do_reverse_dns: bool = True) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()
         if not domain or " " in domain:
@@ -182,6 +186,8 @@ class Recon:
             self._follow_cname_chain(domain, result)
         if do_mail_auth:
             self._check_mail_auth(domain, result)
+        if do_reverse_dns:
+            self._check_reverse_dns(domain, result)
         if do_wildcard:
             self._check_wildcard(domain, result)
         if do_axfr:
@@ -293,6 +299,52 @@ class Recon:
 
         result.mail_auth = {"spf": spf, "dmarc": dmarc,
                             "dkim": {"selectors": selectors}}
+
+    @staticmethod
+    def _ptr_name(ip: str) -> str | None:
+        """Reverse-map an IP to its in-addr.arpa / ip6.arpa query name.
+
+        Returns None for strings that are not valid IPs (hand-built
+        records can carry anything, and those are skipped, not crashed on).
+        """
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return None
+        if isinstance(addr, ipaddress.IPv4Address):
+            return ".".join(reversed(ip.split("."))) + ".in-addr.arpa"
+        nibbles = addr.exploded.replace(":", "")[::-1]
+        return ".".join(nibbles) + ".ip6.arpa"
+
+    def _check_reverse_dns(self, domain, result):
+        """PTR lookup for every IP discovered during enumeration.
+
+        Sets result.reverse_dns to {"lookups": {ip: ptr-or-None}} using the
+        A/AAAA records already fetched, deduplicated in first-seen order.
+        An IP with no PTR record maps to None — that is normal, not an
+        error, so a failed lookup never aborts the rest of the scan.
+        """
+        ips = []
+        for tname in ("A", "AAAA"):
+            for rec in result.records.get(tname, []):
+                data = rec.get("data")
+                if isinstance(data, str) and data not in ips:
+                    ips.append(data)
+        lookups = {}
+        for ip in ips:
+            arpa = self._ptr_name(ip)
+            ptr = None
+            if arpa is not None:
+                try:
+                    resp = self.client.query(arpa, TYPE_PTR)
+                    answers = [r for r in resp.get("answers", [])
+                               if r.get("type") == TYPE_PTR]
+                    if answers:
+                        ptr = str(answers[0]["data"])
+                except DnsError:
+                    pass
+            lookups[ip] = ptr
+        result.reverse_dns = {"lookups": lookups}
 
     def _get_nameservers(self, domain, result, last_resp):
         ns_list = []
