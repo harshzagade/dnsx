@@ -133,6 +133,60 @@ def test_dns_client_axfr_refused(fake_dns_server):
     with pytest.raises(DnsError):
         client.axfr("example.com", "ns1.example.com")
 
+def test_dns_client_tc_retry_uses_tcp(fake_dns_server):
+    """A TC-flagged UDP reply is retried over TCP; the TCP answer wins."""
+    from conftest import UDP_STATE
+    table = example_table()
+    fake_dns_server["set"](table)
+    # UDP and TCP disagree on purpose, so the returned answer proves
+    # which transport served the query.
+    tcp_table = dict(table)
+    tcp_table[("example.com", TYPE_A)] = [("A", "203.0.113.9")]
+    fake_dns_server["table"].clear()
+    fake_dns_server["table"].update(tcp_table)
+    UDP_STATE["tc"] = {("example.com", TYPE_A)}
+    client = DnsClient(server="127.0.0.1", port=fake_dns_server["tcp_port"])
+    resp = client.query("example.com", TYPE_A)
+    assert resp["answers"][0]["data"] == "203.0.113.9"
+    assert client.tcp_fallbacks == 1
+
+
+def test_dns_client_tc_truncated_packet_retries_tcp(fake_dns_server):
+    """A TC-flagged UDP reply cut short mid-record still retries over TCP.
+
+    This is the case the old code missed: parsing the truncated body
+    raised before the TC check ever ran, so no retry happened.
+    """
+    from conftest import UDP_STATE
+    table = example_table()
+    fake_dns_server["set"](table)
+    tcp_table = dict(table)
+    tcp_table[("example.com", TYPE_A)] = [("A", "203.0.113.9")]
+    fake_dns_server["table"].clear()
+    fake_dns_server["table"].update(tcp_table)
+    UDP_STATE["tc"] = {("example.com", TYPE_A)}
+    UDP_STATE["truncate_tc"] = True
+    client = DnsClient(server="127.0.0.1", port=fake_dns_server["tcp_port"])
+    resp = client.query("example.com", TYPE_A)
+    assert resp["answers"][0]["data"] == "203.0.113.9"
+    assert client.tcp_fallbacks == 1
+
+
+def test_dns_client_no_tc_uses_udp(fake_dns_server):
+    """Without the TC bit the UDP answer is used and TCP is never touched."""
+    from conftest import UDP_STATE
+    table = example_table()
+    fake_dns_server["set"](table)
+    tcp_table = dict(table)
+    tcp_table[("example.com", TYPE_A)] = [("A", "203.0.113.9")]
+    fake_dns_server["table"].clear()
+    fake_dns_server["table"].update(tcp_table)
+    client = DnsClient(server="127.0.0.1", port=fake_dns_server["tcp_port"])
+    resp = client.query("example.com", TYPE_A)
+    assert resp["answers"][0]["data"] == "93.184.216.34"
+    assert client.tcp_fallbacks == 0
+
+
 def test_dns_timeout(udp_blackhole):
     client = DnsClient(server="127.0.0.1", port=59999, timeout=0.1, retries=0)
     with pytest.raises(DnsTimeout):

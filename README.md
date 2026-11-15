@@ -152,7 +152,10 @@ always shows where its answers came from.
 - **Wire protocol** (`dnsx/dns.py`): builds and parses DNS messages by
   hand — label encoding, compression pointers, and record decoding for
   A, AAAA, NS, CNAME, MX, TXT, SOA, CAA, and DS. UDP with automatic TCP fallback
-  when the TC (truncated) bit is set; AXFR runs over TCP.
+  when the TC (truncated) bit is set — the bit is read from the reply
+  header before the body is parsed, so a reply cut short mid-record still
+  triggers the retry instead of surfacing a parse error; AXFR runs over TCP.
+  The number of TCP retries is reported as `tcp_fallbacks` in `--json`.
 - **Wildcard detection** (`dnsx/recon.py`): queries two random
   `dnsx<hex>.example.com` names. A wildcard is reported only when both
   resolve *and* share at least one IP, so a single anycast fluke can't
@@ -175,7 +178,7 @@ always shows where its answers came from.
 python3 -m pytest tests/ -q
 ```
 
-47 tests, all hermetic: record parsing is checked against hand-built
+50 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.

@@ -34,6 +34,7 @@ class ReconResult:
     timeout: float | None = None
     cname_chain: dict | None = None
     mail_auth: dict | None = None
+    tcp_fallbacks: int = 0
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -58,7 +59,8 @@ class ReconResult:
             "resolver": self.resolver,
             "timeout": self.timeout,
             "cname_chain": self.cname_chain,
-            "mail_auth": self.mail_auth
+            "mail_auth": self.mail_auth,
+            "tcp_fallbacks": self.tcp_fallbacks
         }
 
 def format_record(record: dict) -> str:
@@ -186,6 +188,7 @@ class Recon:
             self._check_zone_transfer(domain, result)
 
         result.duration_seconds = time.perf_counter() - start_time
+        result.tcp_fallbacks = getattr(self.client, "tcp_fallbacks", 0)
         return result
 
     # A chain longer than this is treated as misconfigured rather than

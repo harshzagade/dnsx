@@ -112,7 +112,16 @@ class _FakeUdpSocket:
         qname, offset = decode_name(data, 12)
         qtype = struct.unpack("!H", data[offset:offset + 2])[0]
         ans, rcode = lookup_answer(UDP_STATE.get("table", {}), qname, qtype)
-        self._pending = build_response(qid, qname, qtype, ans, rcode)
+        resp = build_response(qid, qname, qtype, ans, rcode)
+        if (qname.lower().rstrip("."), qtype) in UDP_STATE.get("tc", set()):
+            # Set the TC bit; optionally cut the datagram short mid-record
+            # (a real truncated reply), to prove the client retries over
+            # TCP instead of surfacing a parse error for a partial answer.
+            flags = struct.unpack("!H", resp[2:4])[0] | 0x0200
+            resp = resp[:2] + struct.pack("!H", flags) + resp[4:]
+            if UDP_STATE.get("truncate_tc"):
+                resp = resp[:-3]
+        self._pending = resp
         return len(data)
 
     def recvfrom(self, nbytes):
@@ -133,7 +142,7 @@ class _FakeUdpSocket:
 
 
 # Mutable holder the fake UDP socket reads from; tests set it via fixtures.
-UDP_STATE = {"table": {}, "blackhole": False}
+UDP_STATE = {"table": {}, "blackhole": False, "tc": set(), "truncate_tc": False}
 
 _REAL_SOCKET = socket.socket
 
@@ -149,10 +158,14 @@ def patch_udp_sockets(monkeypatch):
     """Route DGRAM sockets through the in-process fake; TCP stays real."""
     UDP_STATE["table"] = {}
     UDP_STATE["blackhole"] = False
+    UDP_STATE["tc"] = set()
+    UDP_STATE["truncate_tc"] = False
     monkeypatch.setattr(socket, "socket", _socket_factory)
     yield
     UDP_STATE["table"] = {}
     UDP_STATE["blackhole"] = False
+    UDP_STATE["tc"] = set()
+    UDP_STATE["truncate_tc"] = False
 
 
 @pytest.fixture

@@ -207,9 +207,17 @@ class DnsClient:
         self.port = port
         self.timeout = timeout
         self.retries = retries
+        # Queries retried over TCP after a truncated (TC-bit) UDP reply.
+        self.tcp_fallbacks = 0
 
     def query(self, name: str, qtype: int) -> Dict[str, Any]:
-        """Performs a DNS query over UDP, falling back to TCP if truncated."""
+        """Performs a DNS query over UDP, falling back to TCP if truncated.
+
+        The TC bit is read from the 12-byte header *before* the body is
+        parsed: a truncated reply is often cut short mid-record, so parsing
+        it first would raise before the retry ever runs. Only a TC flag on
+        a response carrying our transaction ID triggers the retry.
+        """
         qid = random.getrandbits(16)
         packet = build_query(name, qtype, qid)
 
@@ -219,10 +227,12 @@ class DnsClient:
                 try:
                     s.sendto(packet, (self.server, self.port))
                     data, _ = s.recvfrom(4096)
-                    resp = parse_response(data, qid)
-                    if resp["flags"] & 0x0200: # TC bit
-                        return self.query_tcp(name, qtype)
-                    return resp
+                    if len(data) >= 12:
+                        resp_qid, flags = struct.unpack("!HH", data[0:4])
+                        if resp_qid == qid and flags & 0x0200:  # TC bit
+                            self.tcp_fallbacks += 1
+                            return self.query_tcp(name, qtype)
+                    return parse_response(data, qid)
                 except socket.timeout:
                     if i == self.retries:
                         raise DnsTimeout(f"Query timed out after {self.retries + 1} attempts")
