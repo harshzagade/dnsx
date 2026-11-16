@@ -22,6 +22,18 @@ RECORD_TYPES = {
 
 TYPE_NAMES = {v: k for k, v in RECORD_TYPES.items()}
 
+# Common subdomain labels probed by --brute. Small on purpose: the mode is
+# a quick sweep, not a full wordlist attack (pass --wordlist FILE for that).
+BRUTE_WORDLIST = (
+    "www", "mail", "ftp", "admin", "api", "blog", "shop", "dev",
+    "staging", "test", "app", "web", "ns1", "ns2", "smtp", "pop",
+    "imap", "vpn", "remote", "portal", "secure", "login", "cdn",
+    "static", "assets", "media", "support", "help", "docs", "wiki",
+    "git", "db", "backup", "old", "beta", "demo", "internal",
+    "dashboard", "cloud", "dns", "mx", "webmail", "forum", "status",
+    "auth", "sso", "billing", "store", "mobile", "m", "chat",
+)
+
 @dataclass
 class ReconResult:
     domain: str
@@ -37,6 +49,7 @@ class ReconResult:
     mail_auth: dict | None = None
     tcp_fallbacks: int = 0
     reverse_dns: dict | None = None
+    brute_force: dict | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -63,7 +76,8 @@ class ReconResult:
             "cname_chain": self.cname_chain,
             "mail_auth": self.mail_auth,
             "tcp_fallbacks": self.tcp_fallbacks,
-            "reverse_dns": self.reverse_dns
+            "reverse_dns": self.reverse_dns,
+            "brute_force": self.brute_force
         }
 
 def format_record(record: dict) -> str:
@@ -156,7 +170,8 @@ class Recon:
     def enumerate(self, domain: str, types=("A", "AAAA", "NS", "MX", "TXT", "SOA", "CAA", "DS"),
                   do_wildcard: bool = True, do_axfr: bool = True,
                   do_cname_chain: bool = True, do_mail_auth: bool = True,
-                  do_reverse_dns: bool = True) -> ReconResult:
+                  do_reverse_dns: bool = True, do_brute_force: bool = False,
+                  wordlist: list | None = None) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()
         if not domain or " " in domain:
@@ -190,6 +205,10 @@ class Recon:
             self._check_reverse_dns(domain, result)
         if do_wildcard:
             self._check_wildcard(domain, result)
+        if do_brute_force:
+            # Runs after the wildcard check on purpose: hits are filtered
+            # against the wildcard IPs it found (see _brute_force_subdomains).
+            self._brute_force_subdomains(domain, result, wordlist)
         if do_axfr:
             self._check_zone_transfer(domain, result)
 
@@ -386,6 +405,49 @@ class Recon:
             result.wildcard = {"detected": detected, "probes": labels, "ips": shared}
         except DnsError as e:
             result.wildcard = {"detected": False, "probes": labels, "ips": [], "error": str(e)}
+
+    def _brute_force_subdomains(self, domain, result, wordlist=None):
+        """Probe common subdomain labels with A queries (--brute mode).
+
+        Sets result.brute_force to {"tried", "hits", "filtered", "errors",
+        "wildcard_ips"}. A label that answers NXDOMAIN is a miss; any
+        other DNS error is counted and skipped. Hits that resolve only to
+        the wildcard IPs found by _check_wildcard are filed under
+        "filtered", not "hits": on a wildcard domain every label
+        resolves, so only addresses outside the wildcard set prove a real
+        subdomain. When wildcard detection was skipped (result.wildcard
+        is None) or found nothing, nothing is filtered. Only A answers
+        count as hits — a bare CNAME with no address is not a subdomain
+        worth reporting.
+        """
+        labels = list(wordlist) if wordlist is not None else list(BRUTE_WORDLIST)
+        wildcard_ips = set()
+        if result.wildcard and result.wildcard.get("detected"):
+            wildcard_ips = set(result.wildcard.get("ips", []))
+        hits, filtered, errors = [], [], 0
+        for label in labels:
+            name = f"{label}.{domain}"
+            try:
+                resp = self.client.query(name, TYPE_A)
+            except DnsError as e:
+                # NXDOMAIN is the expected "no such subdomain" signal.
+                if "NXDOMAIN" in str(e) or "Non-Existent Domain" in str(e):
+                    continue
+                errors += 1
+                continue
+            ips = sorted({r["data"] for r in resp.get("answers", [])
+                          if r.get("type") == TYPE_A})
+            if not ips:
+                continue
+            entry = {"subdomain": name, "ips": ips}
+            if wildcard_ips and set(ips) <= wildcard_ips:
+                filtered.append(entry)
+            else:
+                hits.append(entry)
+        result.brute_force = {
+            "tried": len(labels), "hits": hits, "filtered": filtered,
+            "errors": errors, "wildcard_ips": sorted(wildcard_ips),
+        }
 
     def _check_zone_transfer(self, domain, result):
         for ns in result.nameservers[:3]:

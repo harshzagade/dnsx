@@ -36,6 +36,12 @@ python3 -m dnsx example.com --types A,MX,TXT --json --resolver 1.1.1.1
 # Skip the wildcard / zone-transfer checks (faster, quieter)
 python3 -m dnsx example.com --no-wildcard --no-axfr
 
+# Brute-force common subdomains (wildcard IPs are filtered from hits)
+python3 -m dnsx example.com --brute
+
+# Same, with your own wordlist (one label per line; implies --brute)
+python3 -m dnsx example.com --wordlist subdomains.txt
+
 # Non-standard resolver port (handy for a local test server)
 python3 -m dnsx example.com --server 127.0.0.1 --port 5353
 ```
@@ -56,6 +62,8 @@ Options:
 | `--no-cname-chain` | off | Skip CNAME chain following |
 | `--no-mail-auth` | off | Skip the SPF/DKIM/DMARC summary |
 | `--no-reverse-dns` | off | Skip reverse DNS (PTR) lookups |
+| `--brute` | off | Brute-force common subdomains from the built-in wordlist |
+| `--wordlist` | — | Wordlist file for `--brute` (one label per line; implies `--brute`) |
 | `--version` | — | Print version and exit |
 
 Exit codes: `0` clean run, `1` DNS/network error, `2` bad arguments or
@@ -158,6 +166,25 @@ dead end, and a cycle (or a chain longer than 10 hops) is flagged
 instead of followed forever. `--json` carries the same data as a
 `cname_chain` object with `hops`, `final`, `addresses`, and `status`.
 
+`--brute` probes 51 common subdomain labels (`www`, `mail`, `api`,
+`admin`, …) with A queries and lists the ones that resolve:
+
+```text
+[Subdomains]
+Subdomains found: 3 (51 labels tried, 1 filtered as wildcard)
+  www.example.com -> 93.184.216.34
+  api.example.com -> 93.184.216.99
+  ns1.example.com -> 127.0.0.1
+```
+
+On a wildcard domain every label resolves, so hits that answer only
+with the wildcard IPs are filtered out of the list (counted, not
+hidden) — only addresses outside the wildcard set prove a real
+subdomain. The filter needs the wildcard check, so `--brute` pairs
+with the default wildcard detection; with `--no-wildcard` nothing is
+filtered. `--json` carries the same data as a `brute_force` object
+with `tried`, `hits`, `filtered`, `errors`, and `wildcard_ips`.
+
 `--json` output also carries the `resolver` IP and `timeout` used for the
 scan, and the text report prints them under the title, so a saved report
 always shows where its answers came from.
@@ -188,6 +215,10 @@ always shows where its answers came from.
   enumerated A/AAAA records (`in-addr.arpa` for IPv4, nibble-reversed
   `ip6.arpa` for IPv6), shown as an ip -> name mapping with missing
   PTR records marked, not errored on.
+- **Subdomain brute-force** (`dnsx/recon.py`): `--brute` probes the
+  built-in 51-label wordlist (or `--wordlist FILE`) with A queries;
+  hits resolving only to the wildcard IPs are filtered out, so a
+  wildcard domain reports no false subdomains.
 - **Output** (`dnsx/report.py`): plain-text report for humans, `--json`
   for pipelines.
 
@@ -197,7 +228,7 @@ always shows where its answers came from.
 python3 -m pytest tests/ -q
 ```
 
-56 tests, all hermetic: record parsing is checked against hand-built
+65 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.

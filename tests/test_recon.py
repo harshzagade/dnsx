@@ -320,6 +320,85 @@ def test_recon_invalid_domain():
     with pytest.raises(ValueError): recon.enumerate("", types=())
     with pytest.raises(ValueError): recon.enumerate("has space.com", types=())
 
+def _brute_routes():
+    return {
+        ("www.example.com", TYPE_A): [{"type": 1, "data": "93.184.216.34"}],
+        ("api.example.com", TYPE_A): [{"type": 1, "data": "93.184.216.99"}],
+        ("mail.example.com", TYPE_A): [{"type": 1, "data": "203.0.113.7"}],
+    }
+
+def test_brute_force_hits_and_misses():
+    recon = Recon(client=StubClient(_brute_routes()))
+    res = recon.enumerate("example.com", types=(), do_wildcard=False,
+                          do_axfr=False, do_brute_force=True,
+                          wordlist=["www", "api", "nope", "mail"])
+    bf = res.brute_force
+    assert bf["tried"] == 4
+    assert [h["subdomain"] for h in bf["hits"]] == [
+        "www.example.com", "api.example.com", "mail.example.com"]
+    assert bf["hits"][0]["ips"] == ["93.184.216.34"]
+    assert bf["filtered"] == []  # wildcard check skipped: nothing filtered
+    assert bf["errors"] == 0
+
+def test_brute_force_wildcard_filtering():
+    # Wildcard answers 203.0.113.7 for any random label; mail resolves to
+    # only that IP so it is filtered, while www/api keep their own IPs.
+    def wild_query(name, qtype):
+        routes = _brute_routes()
+        key = (name.lower().rstrip("."), qtype)
+        if key in routes:
+            return {"answers": routes[key], "authority": [], "additional": [], "rcode": 0, "flags": 0x8180}
+        if name.startswith("dnsx") and qtype == TYPE_A:
+            return {"answers": [{"type": 1, "data": "203.0.113.7"}], "authority": [], "additional": [], "rcode": 0, "flags": 0x8180}
+        raise DnsError("NXDOMAIN")
+    client = StubClient()
+    client.query = wild_query
+    recon = Recon(client=client)
+    res = recon.enumerate("example.com", types=(), do_wildcard=True,
+                          do_axfr=False, do_brute_force=True,
+                          wordlist=["www", "api", "mail"])
+    assert res.wildcard["detected"] is True
+    bf = res.brute_force
+    assert [h["subdomain"] for h in bf["hits"]] == ["www.example.com", "api.example.com"]
+    assert [f["subdomain"] for f in bf["filtered"]] == ["mail.example.com"]
+    assert bf["wildcard_ips"] == ["203.0.113.7"]
+    txt = render_text(res)
+    assert "[Subdomains]" in txt
+    assert "Subdomains found: 2 (3 labels tried, 1 filtered as wildcard)" in txt
+    assert "www.example.com -> 93.184.216.34" in txt
+    assert "mail.example.com" not in txt.split("[Subdomains]")[1]
+
+def test_brute_force_error_counted_not_fatal():
+    def flaky_query(name, qtype):
+        if name.startswith("www"):
+            raise DnsError("SERVFAIL")
+        raise DnsError("NXDOMAIN")
+    client = StubClient()
+    client.query = flaky_query
+    recon = Recon(client=client)
+    res = recon.enumerate("example.com", types=(), do_wildcard=False,
+                          do_axfr=False, do_brute_force=True,
+                          wordlist=["www", "api"])
+    assert res.brute_force["errors"] == 1
+    assert res.brute_force["hits"] == []
+
+def test_brute_force_off_by_default():
+    recon = Recon(client=StubClient(_brute_routes()))
+    res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=False)
+    assert res.brute_force is None
+    assert "[Subdomains]" not in render_text(res)
+
+def test_brute_force_builtin_wordlist():
+    from dnsx.recon import BRUTE_WORDLIST
+    assert len(BRUTE_WORDLIST) >= 40
+    assert "www" in BRUTE_WORDLIST and "api" in BRUTE_WORDLIST
+    assert len(set(BRUTE_WORDLIST)) == len(BRUTE_WORDLIST)  # no duplicates
+    recon = Recon(client=StubClient(_brute_routes()))
+    res = recon.enumerate("example.com", types=(), do_wildcard=False,
+                          do_axfr=False, do_brute_force=True)
+    assert res.brute_force["tried"] == len(BRUTE_WORDLIST)
+    assert "www.example.com" in [h["subdomain"] for h in res.brute_force["hits"]]
+
 def test_reports():
     res = ReconResult("example.com", {"A": [{"type": 1, "data": "93.184.216.34"}]}, {}, [], {"detected": False}, {"vulnerable": False, "notes": "refused"}, 0.1)
     txt = render_text(res)

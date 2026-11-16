@@ -76,6 +76,21 @@ def render_text(result: ReconResult) -> str:
             lines.append(msg)
         lines.append("")
 
+    if result.brute_force is not None:
+        bf = result.brute_force
+        lines.append("[Subdomains]")
+        hits = bf.get("hits", [])
+        filtered = bf.get("filtered", [])
+        summary = f"Subdomains found: {len(hits)} ({bf.get('tried', 0)} labels tried"
+        if filtered:
+            summary += f", {len(filtered)} filtered as wildcard"
+        if bf.get("errors"):
+            summary += f", {bf['errors']} error{'s' if bf['errors'] != 1 else ''}"
+        lines.append(summary + ")")
+        for h in hits:
+            lines.append(f"  {h['subdomain']} -> {', '.join(h['ips'])}")
+        lines.append("")
+
     if result.zone_transfer:
         lines.append("[Zone transfer]")
         if result.zone_transfer.get("vulnerable"):

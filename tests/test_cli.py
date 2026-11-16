@@ -134,6 +134,64 @@ def test_cli_wildcard_end_to_end(fake_dns_server, capsys):
     assert "Wildcard DNS: DETECTED" in capsys.readouterr().out
 
 
+def test_cli_brute_end_to_end(fake_dns_server, capsys):
+    table = example_table()
+    table[("api.example.com", TYPE_A)] = [("A", "93.184.216.99")]
+    fake_dns_server["set"](table)
+    code = main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--brute", "--no-axfr"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "[Subdomains]" in out
+    assert "www.example.com -> 93.184.216.34" in out
+    assert "api.example.com -> 93.184.216.99" in out
+    assert "ns1.example.com -> 127.0.0.1" in out
+
+
+def test_cli_brute_wildcard_filter_end_to_end(fake_dns_server, capsys):
+    fake_dns_server["set"](wild_table())
+    code = main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--brute", "--no-axfr"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "[Subdomains]" in out
+    assert "www.example.com -> 93.184.216.34" in out  # real hit: own IP
+    assert "filtered as wildcard" in out
+    section = out.split("[Subdomains]")[1]
+    assert "mail.example.com" not in section  # only the wildcard IP: filtered
+
+
+def test_cli_brute_wordlist_file(fake_dns_server, tmp_path, capsys):
+    table = example_table()
+    table[("api.example.com", TYPE_A)] = [("A", "93.184.216.99")]
+    fake_dns_server["set"](table)
+    wl = tmp_path / "words.txt"
+    wl.write_text("# comment line\n\napi\nwww\n")
+    code = main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]),
+                 "--wordlist", str(wl), "--no-axfr"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Subdomains found: 2 (2 labels tried)" in out
+    assert "api.example.com -> 93.184.216.99" in out
+
+
+def test_cli_wordlist_errors(tmp_path, capsys):
+    missing = tmp_path / "nope.txt"
+    with pytest.raises(SystemExit) as e:
+        main(["example.com", "--wordlist", str(missing)])
+    assert e.value.code == 2
+
+    bad = tmp_path / "bad.txt"
+    bad.write_text("good\nbad_label!\n")
+    with pytest.raises(SystemExit) as e:
+        main(["example.com", "--wordlist", str(bad)])
+    assert e.value.code == 2
+
+    empty = tmp_path / "empty.txt"
+    empty.write_text("# only a comment\n")
+    with pytest.raises(SystemExit) as e:
+        main(["example.com", "--wordlist", str(empty)])
+    assert e.value.code == 2
+
+
 def test_cli_axfr_end_to_end(fake_dns_server, capsys):
     fake_dns_server["set"](example_table())
     main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"])])
