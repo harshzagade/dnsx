@@ -93,6 +93,16 @@ def render_text(result: ReconResult) -> str:
 
     if result.zone_transfer:
         lines.append("[Zone transfer]")
+        servers = result.zone_transfer.get("servers")
+        if servers:
+            for s in servers:
+                status = s.get("status", "error")
+                if status == "allowed":
+                    lines.append(f"  {s['nameserver']}: ALLOWED ({s.get('records', 0)} records)")
+                else:
+                    detail = s.get("detail") or ""
+                    extra = f" ({detail})" if status in ("error", "unresolvable") and detail else ""
+                    lines.append(f"  {s['nameserver']}: {status}{extra}")
         if result.zone_transfer.get("vulnerable"):
             ns = result.zone_transfer.get("nameserver")
             cnt = result.zone_transfer.get("records")

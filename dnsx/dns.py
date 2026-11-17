@@ -324,7 +324,10 @@ class DnsClient:
                     
                     if soa_count >= 2:
                         break
-            except (socket.timeout, ConnectionError):
+            except socket.timeout:
+                if not all_records:
+                    raise DnsError("zone transfer timed out")
+            except ConnectionError:
                 if not all_records:
                     raise DnsError("zone transfer not supported")
         

@@ -80,6 +80,23 @@ class ReconResult:
             "brute_force": self.brute_force
         }
 
+def classify_axfr_error(message: str) -> str:
+    """Map an AXFR failure message to a per-nameserver status.
+
+    Statuses: "refused" (server answered REFUSED), "timeout" (no reply
+    within the wait), "unresolvable" (the nameserver hostname itself
+    does not resolve), anything else "error".
+    """
+    low = message.lower()
+    if "refused" in low:
+        return "refused"
+    if "timed out" in low or "timeout" in low:
+        return "timeout"
+    if "could not resolve" in low:
+        return "unresolvable"
+    return "error"
+
+
 def format_record(record: dict) -> str:
     rtype = record.get("type")
     data = record.get("data")
@@ -450,31 +467,71 @@ class Recon:
         }
 
     def _check_zone_transfer(self, domain, result):
+        # Try every nameserver (max 3) and record each outcome separately,
+        # instead of one overall verdict: a zone may leak from one NS while
+        # the others refuse, and a timeout is not a refusal.
+        servers = []
+        first_allowed = None
         for ns in result.nameservers[:3]:
             try:
                 records = self.client.axfr(domain, ns)
-                if records:
-                    sample = []
-                    for r in records[:5]:
-                        clean_r = r.copy()
-                        if isinstance(clean_r.get("data"), bytes):
-                            clean_r["data"] = repr(clean_r["data"])
-                        sample.append(clean_r)
-                    result.zone_transfer = {
-                        "vulnerable": True, 
-                        "nameserver": ns, 
-                        "records": len(records), 
-                        "sample": sample
-                    }
-                    return
-            except DnsError:
+            except DnsError as e:
+                servers.append({
+                    "nameserver": ns,
+                    "status": classify_axfr_error(str(e)),
+                    "records": 0,
+                    "detail": str(e),
+                })
                 continue
-        
+            if not records:
+                servers.append({
+                    "nameserver": ns,
+                    "status": "error",
+                    "records": 0,
+                    "detail": "zone transfer returned no records",
+                })
+                continue
+            servers.append({
+                "nameserver": ns, "status": "allowed",
+                "records": len(records), "detail": "",
+            })
+            if first_allowed is None:
+                sample = []
+                for r in records[:5]:
+                    clean_r = r.copy()
+                    if isinstance(clean_r.get("data"), bytes):
+                        clean_r["data"] = repr(clean_r["data"])
+                    sample.append(clean_r)
+                first_allowed = {
+                    "nameserver": ns, "records": len(records), "sample": sample,
+                }
+
+        if first_allowed is not None:
+            result.zone_transfer = {
+                "vulnerable": True,
+                "nameserver": first_allowed["nameserver"],
+                "records": first_allowed["records"],
+                "sample": first_allowed["sample"],
+                "servers": servers,
+            }
+            return
+
+        if servers and all(s["status"] == "refused" for s in servers):
+            note = "zone transfer refused by all nameservers"
+        elif servers:
+            counts = {}
+            for s in servers:
+                counts[s["status"]] = counts.get(s["status"], 0) + 1
+            summary = ", ".join(f"{n} {st}" for st, n in sorted(counts.items()))
+            note = f"zone transfer not allowed by any nameserver ({summary})"
+        else:
+            note = "zone transfer refused by all nameservers"
         result.zone_transfer = {
-            "vulnerable": False, 
-            "nameserver": None, 
-            "records": 0, 
-            "sample": [], 
-            "note": "zone transfer refused by all nameservers"
+            "vulnerable": False,
+            "nameserver": None,
+            "records": 0,
+            "sample": [],
+            "servers": servers,
+            "note": note,
         }
 

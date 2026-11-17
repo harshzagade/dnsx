@@ -108,19 +108,28 @@ DnsX report for example.com
 Wildcard DNS: not detected
 
 [Zone transfer]
+  ns1.example.com: refused
+  ns2.example.com: refused
 Zone transfer: zone transfer refused by all nameservers
 
 Scan took 22.778s
 ```
 
-A vulnerable zone transfer looks like this instead:
+A vulnerable zone transfer looks like this instead — every nameserver is
+reported separately, so a zone that leaks from one NS while the others
+refuse is visible at a glance:
 
 ```text
 [Zone transfer]
+  ns1.example.com: ALLOWED (41 records)
+  ns2.example.com: refused
 Zone transfer: VULNERABLE via ns1.example.com (41 records)
 ```
 
-(`--json` adds a `sample` field with the first 5 transferred records.)
+(`--json` adds a `sample` field with the first 5 transferred records, and a
+`servers` list with one `{nameserver, status, records, detail}` entry per
+nameserver — `status` is `allowed`, `refused`, `timeout`, `unresolvable`,
+or `error`.)
 
 Every report ends with a one-line mail-authentication summary built from
 the domain's own records:
@@ -202,9 +211,12 @@ always shows where its answers came from.
   `dnsx<hex>.example.com` names. A wildcard is reported only when both
   resolve *and* share at least one IP, so a single anycast fluke can't
   flip the result.
-- **Zone-transfer test** (`dnsx/recon.py`): tries AXFR against each
-  nameserver in turn (max 3) and reports the first one that hands over
-  the zone.
+- **Zone-transfer test** (`dnsx/recon.py`): tries AXFR against every
+  nameserver (max 3) and reports each result separately — allowed,
+  refused, timeout, unresolvable, or error — in the text report and as
+  a `servers` list in `--json`, instead of one overall verdict. A
+  stalled AXFR now raises "zone transfer timed out" (`dnsx/dns.py`)
+  instead of being lumped in with refusals.
 - **CNAME chain following** (`dnsx/recon.py`): when the target returns a
   CNAME, each hop is followed (max 10, cycles detected) until the final
   A/AAAA answer, and every hop is shown in the report.

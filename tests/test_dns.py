@@ -138,6 +138,21 @@ def test_dns_client_axfr_refused(fake_dns_server):
     with pytest.raises(DnsError):
         client.axfr("example.com", "ns1.example.com")
 
+def test_dns_client_axfr_timeout(monkeypatch):
+    # A connect that stalls must surface as a timeout, not "not supported",
+    # so the per-nameserver report can tell timeout apart from refusal.
+    class TimeoutSocket:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def settimeout(self, t): pass
+        def connect(self, addr): raise socket.timeout("timed out")
+        def sendall(self, data): pass
+    monkeypatch.setattr("dnsx.dns.socket.socket", TimeoutSocket)
+    client = DnsClient(server="127.0.0.1", port=53, timeout=0.5)
+    with pytest.raises(DnsError, match="timed out"):
+        client.axfr("example.com", "127.0.0.1")
+
 def test_dns_client_tc_retry_uses_tcp(fake_dns_server):
     """A TC-flagged UDP reply is retried over TCP; the TCP answer wins."""
     from conftest import UDP_STATE

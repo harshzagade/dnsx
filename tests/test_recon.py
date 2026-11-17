@@ -93,6 +93,60 @@ def test_recon_axfr_failover():
     assert res.zone_transfer["vulnerable"] is True
     assert res.zone_transfer["nameserver"] == "ns2.com."
 
+def test_recon_axfr_per_server_all_refused():
+    routes = {("example.com", TYPE_NS): [{"type": TYPE_NS, "data": "ns1.com."}, {"type": TYPE_NS, "data": "ns2.com."}]}
+    recon = Recon(client=StubClient(routes, axfr_data="refused"))
+    res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=True)
+    assert res.zone_transfer["vulnerable"] is False
+    assert res.zone_transfer["nameserver"] is None
+    assert res.zone_transfer["records"] == 0
+    servers = res.zone_transfer["servers"]
+    assert [(s["nameserver"], s["status"]) for s in servers] == [
+        ("ns1.com.", "refused"), ("ns2.com.", "refused")]
+    assert res.zone_transfer["note"] == "zone transfer refused by all nameservers"
+    text = render_text(res)
+    assert "ns1.com.: refused" in text
+    assert "ns2.com.: refused" in text
+
+def test_recon_axfr_per_server_mixed():
+    routes = {("example.com", TYPE_NS): [{"type": TYPE_NS, "data": "ns1.com."}, {"type": TYPE_NS, "data": "ns2.com."}]}
+    class FailClient(StubClient):
+        def axfr(self, zone, ns):
+            if "ns1" in ns: raise DnsError("zone transfer refused")
+            return [{"type": TYPE_SOA, "data": (1,2,3,4,5,6,7)}]
+    recon = Recon(client=FailClient(routes))
+    res = recon.enumerate("example.com", types=(), do_axfr=True)
+    assert res.zone_transfer["vulnerable"] is True
+    assert res.zone_transfer["nameserver"] == "ns2.com."
+    assert res.zone_transfer["records"] == 1
+    servers = res.zone_transfer["servers"]
+    assert [(s["nameserver"], s["status"]) for s in servers] == [
+        ("ns1.com.", "refused"), ("ns2.com.", "allowed")]
+    assert servers[1]["records"] == 1
+    text = render_text(res)
+    assert "ns1.com.: refused" in text
+    assert "ns2.com.: ALLOWED (1 records)" in text
+    assert "VULNERABLE via ns2.com. (1 records)" in text
+
+def test_recon_axfr_per_server_timeout():
+    routes = {("example.com", TYPE_NS): [{"type": TYPE_NS, "data": "ns1.com."}, {"type": TYPE_NS, "data": "ns2.com."}]}
+    class TimeoutClient(StubClient):
+        def axfr(self, zone, ns):
+            if "ns1" in ns: raise DnsError("zone transfer timed out")
+            raise DnsError("zone transfer refused")
+    recon = Recon(client=TimeoutClient(routes))
+    res = recon.enumerate("example.com", types=(), do_axfr=True)
+    assert res.zone_transfer["vulnerable"] is False
+    servers = res.zone_transfer["servers"]
+    assert [(s["nameserver"], s["status"]) for s in servers] == [
+        ("ns1.com.", "timeout"), ("ns2.com.", "refused")]
+    assert "timeout" in res.zone_transfer["note"]
+    assert "refused" in res.zone_transfer["note"]
+    text = render_text(res)
+    assert "ns1.com.: timeout" in text
+    data = json.loads(render_json(res))
+    assert data["zone_transfer"]["servers"][0]["status"] == "timeout"
+
 def test_recon_records_resolver_and_timeout():
     client = StubClient()
     client.server = "1.1.1.1"
