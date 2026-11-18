@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from dnsx.dns import (
     DnsClient, DnsError,
     TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA,
-    TYPE_CAA, TYPE_DS, TYPE_PTR
+    TYPE_CAA, TYPE_DS, TYPE_PTR, TYPE_SRV
 )
 
 RECORD_TYPES = {
@@ -21,6 +21,13 @@ RECORD_TYPES = {
 }
 
 TYPE_NAMES = {v: k for k, v in RECORD_TYPES.items()}
+
+# Common service names probed for SRV records (RFC 2782). Only these
+# well-known services are checked: SRV names cannot be enumerated from
+# DNS itself, so a domain publishing a service under an unusual name
+# simply shows fewer (or no) entries — the check reports what it finds,
+# never guesses.
+SRV_SERVICES = ("_sip._tcp", "_xmpp-client._tcp", "_ldap._tcp", "_kerberos._tcp")
 
 # Common subdomain labels probed by --brute. Small on purpose: the mode is
 # a quick sweep, not a full wordlist attack (pass --wordlist FILE for that).
@@ -50,6 +57,7 @@ class ReconResult:
     tcp_fallbacks: int = 0
     reverse_dns: dict | None = None
     brute_force: dict | None = None
+    srv: dict | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -77,7 +85,8 @@ class ReconResult:
             "mail_auth": self.mail_auth,
             "tcp_fallbacks": self.tcp_fallbacks,
             "reverse_dns": self.reverse_dns,
-            "brute_force": self.brute_force
+            "brute_force": self.brute_force,
+            "srv": self.srv
         }
 
 def classify_axfr_error(message: str) -> str:
@@ -135,6 +144,13 @@ def format_record(record: dict) -> str:
                     f"{data.get('digest_type')} "
                     f"{str(data.get('digest')).upper()}")
         return str(data)
+    if rtype == TYPE_SRV:
+        # Zone-file form: priority weight port target
+        if isinstance(data, dict):
+            return (f"{data.get('priority')} {data.get('weight')} "
+                    f"{data.get('port')} {data.get('target')}")
+        # tolerate tuple form (priority, weight, port, target)
+        return f"{data[0]} {data[1]} {data[2]} {data[3]}"
     if isinstance(data, bytes):
         return repr(data)
     return str(data)
@@ -188,6 +204,7 @@ class Recon:
                   do_wildcard: bool = True, do_axfr: bool = True,
                   do_cname_chain: bool = True, do_mail_auth: bool = True,
                   do_reverse_dns: bool = True, do_brute_force: bool = False,
+                  do_srv: bool = True,
                   wordlist: list | None = None) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()
@@ -220,6 +237,8 @@ class Recon:
             self._check_mail_auth(domain, result)
         if do_reverse_dns:
             self._check_reverse_dns(domain, result)
+        if do_srv:
+            self._check_srv(domain, result)
         if do_wildcard:
             self._check_wildcard(domain, result)
         if do_brute_force:
@@ -381,6 +400,30 @@ class Recon:
                     pass
             lookups[ip] = ptr
         result.reverse_dns = {"lookups": lookups}
+
+    def _check_srv(self, domain, result):
+        """SRV enumeration for the well-known services in SRV_SERVICES.
+
+        Sets result.srv to {"services": {service: [records]}} with one
+        entry per service that published SRV records, each record a
+        {"priority", "weight", "port", "target"} dict (target "." means
+        the service is explicitly not offered, per RFC 2782 — it is still
+        reported, not dropped). A service with no SRV records (usually
+        NXDOMAIN) simply has no entry, and a failed query never aborts
+        the remaining services.
+        """
+        services = {}
+        for service in SRV_SERVICES:
+            try:
+                resp = self.client.query(f"{service}.{domain}", TYPE_SRV)
+            except DnsError:
+                continue
+            records = [r for r in resp.get("answers", [])
+                       if r.get("type") == TYPE_SRV
+                       and isinstance(r.get("data"), dict)]
+            if records:
+                services[service] = [dict(r["data"]) for r in records]
+        result.srv = {"services": services}
 
     def _get_nameservers(self, domain, result, last_resp):
         ns_list = []

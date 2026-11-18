@@ -4,7 +4,7 @@ import struct
 from dnsx.dns import (
     encode_name, decode_name, build_query, parse_response, DnsClient,
     DnsError, DnsTimeout, TYPE_A, TYPE_AAAA, TYPE_NS, TYPE_MX, TYPE_TXT, TYPE_SOA,
-    TYPE_CAA, TYPE_DS, TYPE_PTR
+    TYPE_CAA, TYPE_DS, TYPE_PTR, TYPE_SRV
 )
 from conftest import build_response, example_table
 
@@ -112,6 +112,23 @@ def test_parse_caa_ds_malformed_falls_back_to_raw():
 def test_parse_ptr():
     resp = build_response(1, "34.216.184.93.in-addr.arpa", TYPE_PTR, [("PTR", "example.com.")])
     assert parse_response(resp, 1)["answers"][0]["data"] == "example.com"
+
+
+def test_parse_srv():
+    # SRV: priority 0, weight 5, port 5060, target sip.example.com (RFC 2782)
+    resp = build_response(1, "x", TYPE_SRV, [("SRV", (0, 5, 5060, "sip.example.com."))])
+    assert parse_response(resp, 1)["answers"][0]["data"] == {
+        "priority": 0, "weight": 5, "port": 5060, "target": "sip.example.com",
+    }
+    # Target "." (service explicitly not offered) still decodes
+    resp = build_response(1, "x", TYPE_SRV, [("SRV", (0, 0, 0, "."))])
+    assert parse_response(resp, 1)["answers"][0]["data"]["target"] == ""
+
+
+def test_parse_srv_malformed_falls_back_to_raw():
+    # SRV rdata shorter than priority + weight + port
+    resp = _raw_response(TYPE_SRV, b"\x00\x00\x00\x05")
+    assert parse_response(resp, 1)["answers"][0]["raw"] == b"\x00\x00\x00\x05"
 
 
 def test_dns_client_logic(fake_dns_server):

@@ -64,6 +64,20 @@ def render_text(result: ReconResult) -> str:
             lines.append(f"  {ip} -> {ptr if ptr else '(no PTR record)'}")
         lines.append("")
 
+    if result.srv is not None:
+        lines.append("[SRV]")
+        services = result.srv.get("services", {})
+        if services:
+            for service, records in services.items():
+                for rec in records:
+                    lines.append(f"  {service}.{result.domain}  "
+                                 f"{rec.get('priority')} {rec.get('weight')} "
+                                 f"{rec.get('port')} {rec.get('target')}")
+        else:
+            lines.append("  No SRV records for common services "
+                         "(_sip._tcp, _xmpp-client._tcp, _ldap._tcp, _kerberos._tcp)")
+        lines.append("")
+
     if result.wildcard:
         lines.append("[Wildcard]")
         if result.wildcard.get("detected"):

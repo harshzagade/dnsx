@@ -62,6 +62,7 @@ Options:
 | `--no-cname-chain` | off | Skip CNAME chain following |
 | `--no-mail-auth` | off | Skip the SPF/DKIM/DMARC summary |
 | `--no-reverse-dns` | off | Skip reverse DNS (PTR) lookups |
+| `--no-srv` | off | Skip SRV record enumeration |
 | `--brute` | off | Brute-force common subdomains from the built-in wordlist |
 | `--wordlist` | — | Wordlist file for `--brute` (one label per line; implies `--brute`) |
 | `--version` | — | Print version and exit |
@@ -170,6 +171,24 @@ IPv4 addresses query `<reversed>.in-addr.arpa`, IPv6 the nibble-reversed
 as an error. `--json` carries the same data as a `reverse_dns` object
 mapping each IP to its PTR name (or `null`).
 
+Common service SRV records are enumerated too, so exposed SIP, XMPP,
+LDAP, and Kerberos endpoints show up in the report:
+
+```text
+[SRV]
+  _sip._tcp.example.com  0 5 5060 sip.example.com
+  _ldap._tcp.example.com  0 100 389 ldap.example.com
+```
+
+Only the four well-known service names (`_sip._tcp`,
+`_xmpp-client._tcp`, `_ldap._tcp`, `_kerberos._tcp`) are probed — SRV
+names cannot be enumerated from DNS, so a domain publishing a service
+under an unusual name simply shows fewer (or no) entries. A target of
+`.` (the service is explicitly not offered, RFC 2782) is reported as
+such, not dropped. `--json` carries the same data as a `srv` object
+mapping each service to its list of `priority` / `weight` / `port` /
+`target` records.
+
 A chain that ends at a name with no A/AAAA records is reported as a
 dead end, and a cycle (or a chain longer than 10 hops) is flagged
 instead of followed forever. `--json` carries the same data as a
@@ -202,7 +221,7 @@ always shows where its answers came from.
 
 - **Wire protocol** (`dnsx/dns.py`): builds and parses DNS messages by
   hand — label encoding, compression pointers, and record decoding for
-  A, AAAA, NS, CNAME, MX, TXT, SOA, CAA, and DS. UDP with automatic TCP fallback
+  A, AAAA, NS, CNAME, MX, TXT, SOA, CAA, DS, and SRV. UDP with automatic TCP fallback
   when the TC (truncated) bit is set — the bit is read from the reply
   header before the body is parsed, so a reply cut short mid-record still
   triggers the retry instead of surfacing a parse error; AXFR runs over TCP.
@@ -227,6 +246,11 @@ always shows where its answers came from.
   enumerated A/AAAA records (`in-addr.arpa` for IPv4, nibble-reversed
   `ip6.arpa` for IPv6), shown as an ip -> name mapping with missing
   PTR records marked, not errored on.
+- **SRV enumeration** (`dnsx/recon.py`): queries `_sip._tcp`,
+  `_xmpp-client._tcp`, `_ldap._tcp`, and `_kerberos._tcp` for SRV
+  records (priority/weight/port/target, RFC 2782) and lists the
+  services a domain publishes; a failed query for one service never
+  aborts the others.
 - **Subdomain brute-force** (`dnsx/recon.py`): `--brute` probes the
   built-in 51-label wordlist (or `--wordlist FILE`) with A queries;
   hits resolving only to the wildcard IPs are filtered out, so a
@@ -240,7 +264,7 @@ always shows where its answers came from.
 python3 -m pytest tests/ -q
 ```
 
-65 tests, all hermetic: record parsing is checked against hand-built
+79 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.

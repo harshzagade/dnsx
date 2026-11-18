@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Tuple, Optional
 A, NS, CNAME, SOA, MX, TXT, AAAA, AXFR, ANY = 1, 2, 5, 6, 15, 16, 28, 252, 255
 PTR = 12
 CAA, DS = 257, 43
+SRV = 33
 IN = 1
 
 # TYPE_* aliases (public surface used by dnsx.recon)
@@ -17,6 +18,7 @@ TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR, 
 )
 TYPE_PTR = PTR
 TYPE_CAA, TYPE_DS = CAA, DS
+TYPE_SRV = SRV
 
 RCODE_MAP = {
     1: "Format Error",
@@ -162,6 +164,18 @@ def parse_record(message: bytes, offset: int) -> Tuple[Dict[str, Any], int]:
                 "algorithm": alg,
                 "digest_type": dtype,
                 "digest": rdata_raw[4:].hex(),
+            }
+        elif rtype == SRV:
+            # RFC 2782: priority (2B), weight (2B), port (2B), target name.
+            if len(rdata_raw) < 6:
+                raise ValueError("short SRV record")
+            prio, weight, port = struct.unpack("!HHH", rdata_raw[:6])
+            target, _ = decode_name(message, rdata_start + 6)
+            res["data"] = {
+                "priority": prio,
+                "weight": weight,
+                "port": port,
+                "target": target,
             }
         else:
             res["raw"] = rdata_raw

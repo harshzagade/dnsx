@@ -15,13 +15,13 @@ import pytest
 from dnsx.dns import (
     encode_name, decode_name, build_query, TYPE_A, TYPE_NS, TYPE_CNAME,
     TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR, TYPE_CAA, TYPE_DS,
-    TYPE_PTR
+    TYPE_PTR, TYPE_SRV
 )
 
 _TYPE_BY_NAME = {
     "A": TYPE_A, "NS": TYPE_NS, "CNAME": TYPE_CNAME, "SOA": TYPE_SOA,
     "MX": TYPE_MX, "TXT": TYPE_TXT, "AAAA": TYPE_AAAA, "AXFR": TYPE_AXFR,
-    "CAA": TYPE_CAA, "DS": TYPE_DS, "PTR": TYPE_PTR,
+    "CAA": TYPE_CAA, "DS": TYPE_DS, "PTR": TYPE_PTR, "SRV": TYPE_SRV,
 }
 
 
@@ -60,6 +60,9 @@ def build_response(qid, qname, qtype, answers, rcode=0, flags=0x8180):
         elif atype_str == "DS":
             # adata: (key_tag, algorithm, digest_type, digest_hex)
             rdata = struct.pack("!HBB", adata[0], adata[1], adata[2]) + bytes.fromhex(adata[3])
+        elif atype_str == "SRV":
+            # adata: (priority, weight, port, target)
+            rdata = struct.pack("!HHH", adata[0], adata[1], adata[2]) + encode_name(adata[3])
 
         body += struct.pack("!H", len(rdata)) + rdata
     return header + body
