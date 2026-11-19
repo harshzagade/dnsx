@@ -29,6 +29,9 @@ def render_text(result: ReconResult) -> str:
             if spf["includes"]:
                 n = len(spf["includes"])
                 spf_part += f" ({n} include{'s' if n != 1 else ''}: {', '.join(spf['includes'])})"
+            if spf.get("multiple"):
+                spf_part += (f" [!] WARNING: {spf['count']} v=spf1 records "
+                             f"— RFC 7208 allows at most one")
         else:
             spf_part = "SPF: none"
         dmarc = auth.get("dmarc")

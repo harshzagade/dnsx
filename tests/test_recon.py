@@ -324,6 +324,37 @@ def test_recon_mail_auth_skipped_by_flag():
     assert res.mail_auth is None
     assert "[Mail auth]" not in render_text(res)
 
+def test_recon_mail_auth_multiple_spf_warning():
+    # Two v=spf1 records is invalid per RFC 7208: warn, keep the first.
+    routes = {
+        ("example.com", RECORD_TYPES["TXT"]): [
+            {"type": 16, "data": ["v=spf1 include:_spf.google.com -all"]},
+            {"type": 16, "data": ["v=spf1 include:mailgun.org ~all"]}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("TXT",), do_wildcard=False, do_axfr=False)
+    auth = res.mail_auth
+    assert auth["spf"]["count"] == 2
+    assert auth["spf"]["multiple"] is True
+    assert auth["spf"]["policy"] == "-all"  # first record wins the summary
+    assert auth["spf"]["includes"] == ["_spf.google.com"]
+    txt = render_text(res)
+    assert "[!] WARNING: 2 v=spf1 records — RFC 7208 allows at most one" in txt
+    assert json.loads(render_json(res))["mail_auth"]["spf"]["count"] == 2
+
+
+def test_recon_mail_auth_single_spf_no_warning():
+    routes = {
+        ("example.com", RECORD_TYPES["TXT"]): [
+            {"type": 16, "data": ["v=spf1 -all"]},
+            {"type": 16, "data": ["google-site-verification=abc"]}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("TXT",), do_wildcard=False, do_axfr=False)
+    assert res.mail_auth["spf"]["count"] == 1
+    assert res.mail_auth["spf"]["multiple"] is False
+    assert "WARNING" not in render_text(res)
+
 def test_recon_reverse_dns_resolved():
     routes = {
         ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],

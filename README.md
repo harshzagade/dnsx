@@ -146,6 +146,10 @@ qualifier and the `include:` list); DMARC from `_dmarc.<domain>`
 (`p=` and `sp=`); DKIM by probing eight well-known selectors
 (`default`, `google`, `selector1`, `selector2`, `mail`, `dkim`, `k1`,
 `s1`) under `_domainkey.<domain>` for a published `v=DKIM1` key.
+Publishing two or more `v=spf1` records is invalid per RFC 7208 (a
+domain must publish at most one), so the summary warns about it and
+keeps the first record; `--json` carries the count as
+`mail_auth.spf.count`.
 Selectors cannot be enumerated from DNS, so a domain using an unusual
 selector name simply shows fewer (or no) DKIM selectors — the check
 reports what it finds, never guesses. `--json` carries the same data

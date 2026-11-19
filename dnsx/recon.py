@@ -341,11 +341,18 @@ class Recon:
         for a v=DKIM1 key. Sets result.mail_auth to {"spf", "dmarc",
         "dkim"} with None / empty values where nothing was published.
         """
-        spf = None
+        spf_records = []
         for rec in result.records.get("TXT", []):
-            spf = parse_spf_record(_txt_strings(rec))
-            if spf:
-                break
+            parsed = parse_spf_record(_txt_strings(rec))
+            if parsed:
+                spf_records.append(parsed)
+        spf = spf_records[0] if spf_records else None
+        if spf is not None:
+            # Two or more v=spf1 records is invalid per RFC 7208 (a domain
+            # must publish at most one); keep the first for the summary but
+            # record the count so the report can warn about it.
+            spf["count"] = len(spf_records)
+            spf["multiple"] = len(spf_records) > 1
 
         dmarc = None
         try:
