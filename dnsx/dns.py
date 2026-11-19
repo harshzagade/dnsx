@@ -10,6 +10,7 @@ A, NS, CNAME, SOA, MX, TXT, AAAA, AXFR, ANY = 1, 2, 5, 6, 15, 16, 28, 252, 255
 PTR = 12
 CAA, DS = 257, 43
 SRV = 33
+RRSIG = 46
 IN = 1
 
 # TYPE_* aliases (public surface used by dnsx.recon)
@@ -19,6 +20,7 @@ TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA, TYPE_AXFR, 
 TYPE_PTR = PTR
 TYPE_CAA, TYPE_DS = CAA, DS
 TYPE_SRV = SRV
+TYPE_RRSIG = RRSIG
 
 RCODE_MAP = {
     1: "Format Error",
@@ -93,14 +95,26 @@ def decode_name(message: bytes, offset: int) -> Tuple[str, int]:
 
     return ".".join(labels), new_offset
 
-def build_query(name: str, qtype: int, qid: Optional[int] = None) -> bytes:
-    """Constructs a DNS query message."""
+def build_query(name: str, qtype: int, qid: Optional[int] = None,
+                dnssec: bool = False) -> bytes:
+    """Constructs a DNS query message.
+
+    With dnssec=True an EDNS0 OPT pseudo-record is appended (UDP payload
+    size 1232, DO bit set in the OPT TTL flags): that is what asks a
+    resolver to include RRSIG records and set the AD bit on validated
+    answers. The DO bit lives in the OPT record, not the header flags.
+    """
     if qid is None:
         qid = random.getrandbits(16)
-    
-    header = struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 0)
+
+    header = struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 1 if dnssec else 0)
     question = encode_name(name) + struct.pack("!HH", qtype, IN)
-    return header + question
+    if not dnssec:
+        return header + question
+    # OPT: root name, type 41, class = UDP payload size, TTL = extended
+    # RCODE (0) | version (0) | flags (DO = 0x8000), RDLEN 0.
+    opt = b"\x00" + struct.pack("!HHIH", 41, 1232, 0x8000, 0)
+    return header + question + opt
 
 def parse_record(message: bytes, offset: int) -> Tuple[Dict[str, Any], int]:
     """Parses a single DNS resource record."""
@@ -177,6 +191,28 @@ def parse_record(message: bytes, offset: int) -> Tuple[Dict[str, Any], int]:
                 "port": port,
                 "target": target,
             }
+        elif rtype == RRSIG:
+            # RFC 4034: covered type (2B), algorithm (1B), labels (1B),
+            # original TTL (4B), signature expiration (4B), signature
+            # inception (4B), key tag (2B), signer's name, signature.
+            # The signature bytes themselves are not kept: the check only
+            # needs to know *which* types are signed, not the signature.
+            if len(rdata_raw) < 18:
+                raise ValueError("short RRSIG record")
+            covered, alg, labels = struct.unpack("!HBB", rdata_raw[:4])
+            orig_ttl, exp, inc = struct.unpack("!III", rdata_raw[4:16])
+            key_tag = struct.unpack("!H", rdata_raw[16:18])[0]
+            signer, _ = decode_name(message, rdata_start + 18)
+            res["data"] = {
+                "covered_type": covered,
+                "algorithm": alg,
+                "labels": labels,
+                "original_ttl": orig_ttl,
+                "expiration": exp,
+                "inception": inc,
+                "key_tag": key_tag,
+                "signer": signer,
+            }
         else:
             res["raw"] = rdata_raw
     except Exception:
@@ -226,16 +262,18 @@ class DnsClient:
         # Queries retried over TCP after a truncated (TC-bit) UDP reply.
         self.tcp_fallbacks = 0
 
-    def query(self, name: str, qtype: int) -> Dict[str, Any]:
+    def query(self, name: str, qtype: int, dnssec: bool = False) -> Dict[str, Any]:
         """Performs a DNS query over UDP, falling back to TCP if truncated.
 
         The TC bit is read from the 12-byte header *before* the body is
         parsed: a truncated reply is often cut short mid-record, so parsing
         it first would raise before the retry ever runs. Only a TC flag on
         a response carrying our transaction ID triggers the retry.
+        With dnssec=True the query carries the EDNS0 DO bit, asking the
+        resolver to return RRSIG records and set the AD bit.
         """
         qid = random.getrandbits(16)
-        packet = build_query(name, qtype, qid)
+        packet = build_query(name, qtype, qid, dnssec=dnssec)
 
         for i in range(self.retries + 1):
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -247,7 +285,7 @@ class DnsClient:
                         resp_qid, flags = struct.unpack("!HH", data[0:4])
                         if resp_qid == qid and flags & 0x0200:  # TC bit
                             self.tcp_fallbacks += 1
-                            return self.query_tcp(name, qtype)
+                            return self.query_tcp(name, qtype, dnssec=dnssec)
                     return parse_response(data, qid)
                 except socket.timeout:
                     if i == self.retries:
@@ -267,10 +305,10 @@ class DnsClient:
             data += chunk
         return data
 
-    def query_tcp(self, name: str, qtype: int) -> Dict[str, Any]:
+    def query_tcp(self, name: str, qtype: int, dnssec: bool = False) -> Dict[str, Any]:
         """Performs a DNS query over TCP."""
         qid = random.getrandbits(16)
-        packet = build_query(name, qtype, qid)
+        packet = build_query(name, qtype, qid, dnssec=dnssec)
         tcp_packet = struct.pack("!H", len(packet)) + packet
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

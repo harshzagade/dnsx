@@ -78,6 +78,21 @@ def render_text(result: ReconResult) -> str:
                          "(_sip._tcp, _xmpp-client._tcp, _ldap._tcp, _kerberos._tcp)")
         lines.append("")
 
+    if result.dnssec is not None:
+        lines.append("[DNSSEC]")
+        d = result.dnssec
+        if d.get("signed"):
+            msg = f"DNSSEC: signed (RRSIG for {', '.join(d['rrsig_types'])}"
+        else:
+            msg = "DNSSEC: not signed (no RRSIG records"
+        msg += "; AD bit set)" if d.get("ad") else "; AD bit not set)"
+        if d.get("has_ds"):
+            msg += " — DS record present"
+        if d.get("error"):
+            msg += f" (check failed: {d['error']})"
+        lines.append(msg)
+        lines.append("")
+
     if result.wildcard:
         lines.append("[Wildcard]")
         if result.wildcard.get("detected"):

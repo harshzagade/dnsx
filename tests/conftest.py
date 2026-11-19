@@ -22,6 +22,7 @@ _TYPE_BY_NAME = {
     "A": TYPE_A, "NS": TYPE_NS, "CNAME": TYPE_CNAME, "SOA": TYPE_SOA,
     "MX": TYPE_MX, "TXT": TYPE_TXT, "AAAA": TYPE_AAAA, "AXFR": TYPE_AXFR,
     "CAA": TYPE_CAA, "DS": TYPE_DS, "PTR": TYPE_PTR, "SRV": TYPE_SRV,
+    "RRSIG": 46,
 }
 
 
@@ -63,6 +64,13 @@ def build_response(qid, qname, qtype, answers, rcode=0, flags=0x8180):
         elif atype_str == "SRV":
             # adata: (priority, weight, port, target)
             rdata = struct.pack("!HHH", adata[0], adata[1], adata[2]) + encode_name(adata[3])
+        elif atype_str == "RRSIG":
+            # adata: (covered_type_str, algorithm, labels, orig_ttl,
+            #         expiration, inception, key_tag, signer, signature_bytes)
+            covered = _TYPE_BY_NAME.get(adata[0], 99)
+            rdata = struct.pack("!HBB", covered, adata[1], adata[2])
+            rdata += struct.pack("!III", adata[3], adata[4], adata[5])
+            rdata += struct.pack("!H", adata[6]) + encode_name(adata[7]) + adata[8]
 
         body += struct.pack("!H", len(rdata)) + rdata
     return header + body

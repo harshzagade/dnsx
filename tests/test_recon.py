@@ -9,7 +9,7 @@ class StubClient:
     def __init__(self, routes=None, axfr_data=None):
         self.routes = routes or {}
         self.axfr_data = axfr_data or []
-    def query(self, name, qtype):
+    def query(self, name, qtype, dnssec=False):
         res = self.routes.get((name.lower().rstrip("."), qtype))
         if isinstance(res, Exception): raise res
         if res is None: raise DnsError("Non-Existent Domain (NXDOMAIN)")
@@ -44,7 +44,7 @@ def test_recon_per_type_error():
     assert res.errors["TXT"] == "boom"
 
 def test_recon_wildcard_detected():
-    def wild_query(name, qtype):
+    def wild_query(name, qtype, dnssec=False):
         if name.startswith("dnsx") and qtype == TYPE_A:
             return {"answers": [{"type": 1, "data": "203.0.113.7"}], "authority": [], "additional": [], "rcode": 0, "flags": 0x8180}
         raise DnsError("NXDOMAIN")
@@ -58,7 +58,7 @@ def test_recon_wildcard_detected():
 
 def test_recon_wildcard_onesided():
     count = 0
-    def wild_query(name, qtype):
+    def wild_query(name, qtype, dnssec=False):
         nonlocal count
         count += 1
         if count == 1: return {"answers": [{"type": 1, "data": "203.0.113.7"}], "authority": [], "additional": [], "rcode": 0, "flags": 0x8180}
@@ -397,7 +397,7 @@ def test_brute_force_hits_and_misses():
 def test_brute_force_wildcard_filtering():
     # Wildcard answers 203.0.113.7 for any random label; mail resolves to
     # only that IP so it is filtered, while www/api keep their own IPs.
-    def wild_query(name, qtype):
+    def wild_query(name, qtype, dnssec=False):
         routes = _brute_routes()
         key = (name.lower().rstrip("."), qtype)
         if key in routes:
@@ -423,7 +423,7 @@ def test_brute_force_wildcard_filtering():
     assert "mail.example.com" not in txt.split("[Subdomains]")[1]
 
 def test_brute_force_error_counted_not_fatal():
-    def flaky_query(name, qtype):
+    def flaky_query(name, qtype, dnssec=False):
         if name.startswith("www"):
             raise DnsError("SERVFAIL")
         raise DnsError("NXDOMAIN")

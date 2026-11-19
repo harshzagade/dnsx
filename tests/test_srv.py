@@ -11,7 +11,7 @@ class StubClient:
     def __init__(self, routes=None):
         self.routes = routes or {}
 
-    def query(self, name, qtype):
+    def query(self, name, qtype, dnssec=False):
         res = self.routes.get((name.lower().rstrip("."), qtype))
         if isinstance(res, Exception):
             raise res

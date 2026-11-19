@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from dnsx.dns import (
     DnsClient, DnsError,
     TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_SOA, TYPE_MX, TYPE_TXT, TYPE_AAAA,
-    TYPE_CAA, TYPE_DS, TYPE_PTR, TYPE_SRV
+    TYPE_CAA, TYPE_DS, TYPE_PTR, TYPE_SRV, TYPE_RRSIG
 )
 
 RECORD_TYPES = {
@@ -17,7 +17,8 @@ RECORD_TYPES = {
     "SOA": TYPE_SOA,
     "CNAME": TYPE_CNAME,
     "CAA": TYPE_CAA,
-    "DS": TYPE_DS
+    "DS": TYPE_DS,
+    "RRSIG": TYPE_RRSIG
 }
 
 TYPE_NAMES = {v: k for k, v in RECORD_TYPES.items()}
@@ -58,6 +59,7 @@ class ReconResult:
     reverse_dns: dict | None = None
     brute_force: dict | None = None
     srv: dict | None = None
+    dnssec: dict | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -86,7 +88,8 @@ class ReconResult:
             "tcp_fallbacks": self.tcp_fallbacks,
             "reverse_dns": self.reverse_dns,
             "brute_force": self.brute_force,
-            "srv": self.srv
+            "srv": self.srv,
+            "dnssec": self.dnssec
         }
 
 def classify_axfr_error(message: str) -> str:
@@ -151,6 +154,17 @@ def format_record(record: dict) -> str:
                     f"{data.get('port')} {data.get('target')}")
         # tolerate tuple form (priority, weight, port, target)
         return f"{data[0]} {data[1]} {data[2]} {data[3]}"
+    if rtype == TYPE_RRSIG:
+        # Zone-file form: covered-type algorithm labels orig-TTL
+        # expiration inception key-tag signer
+        if isinstance(data, dict):
+            covered = TYPE_NAMES.get(data.get("covered_type"),
+                                     str(data.get("covered_type")))
+            return (f"{covered} {data.get('algorithm')} {data.get('labels')} "
+                    f"{data.get('original_ttl')} {data.get('expiration')} "
+                    f"{data.get('inception')} {data.get('key_tag')} "
+                    f"{data.get('signer')}")
+        return str(data)
     if isinstance(data, bytes):
         return repr(data)
     return str(data)
@@ -204,7 +218,7 @@ class Recon:
                   do_wildcard: bool = True, do_axfr: bool = True,
                   do_cname_chain: bool = True, do_mail_auth: bool = True,
                   do_reverse_dns: bool = True, do_brute_force: bool = False,
-                  do_srv: bool = True,
+                  do_srv: bool = True, do_dnssec: bool = True,
                   wordlist: list | None = None) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()
@@ -239,6 +253,8 @@ class Recon:
             self._check_reverse_dns(domain, result)
         if do_srv:
             self._check_srv(domain, result)
+        if do_dnssec:
+            self._check_dnssec(domain, result)
         if do_wildcard:
             self._check_wildcard(domain, result)
         if do_brute_force:
@@ -424,6 +440,40 @@ class Recon:
             if records:
                 services[service] = [dict(r["data"]) for r in records]
         result.srv = {"services": services}
+
+    def _check_dnssec(self, domain, result):
+        """DNSSEC signed-answer check: re-query A with the EDNS0 DO bit
+        set and report whether the answer carries RRSIG records, and
+        whether the resolver set the AD (authenticated data) bit.
+
+        Sets result.dnssec to {"signed", "ad", "rrsig_types", "has_ds"}.
+        "signed" is True only when an RRSIG record actually arrived —
+        the AD bit alone is not proof, since a resolver may set it from
+        its cache. "has_ds" comes from the DS records already enumerated
+        (a signed delegation hint, not a verdict). A failed query leaves
+        signed False with an "error" note, never aborts the scan. This
+        check reads signatures, it does not validate them: full chain
+        validation needs the root trust anchor and is out of scope.
+        """
+        try:
+            resp = self.client.query(domain, TYPE_A, dnssec=True)
+        except DnsError as e:
+            result.dnssec = {"signed": False, "ad": False, "rrsig_types": [],
+                             "has_ds": bool(result.records.get("DS")),
+                             "error": str(e)}
+            return
+        rrsig = [r for r in resp.get("answers", [])
+                 if r.get("type") == TYPE_RRSIG
+                 and isinstance(r.get("data"), dict)]
+        covered = sorted({TYPE_NAMES.get(r["data"]["covered_type"],
+                                        str(r["data"]["covered_type"]))
+                          for r in rrsig})
+        result.dnssec = {
+            "signed": bool(rrsig),
+            "ad": bool(resp.get("flags", 0) & 0x0020),
+            "rrsig_types": covered,
+            "has_ds": bool(result.records.get("DS")),
+        }
 
     def _get_nameservers(self, domain, result, last_resp):
         ns_list = []

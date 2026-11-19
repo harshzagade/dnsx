@@ -55,7 +55,7 @@ Options:
 | `--resolver` | — | Resolver IP to query (overrides `--server`; must be an IP) |
 | `--port` | `53` | Resolver port |
 | `--timeout` | `5.0` | Per-query timeout in seconds |
-| `--types` | `A,AAAA,NS,MX,TXT,SOA,CAA,DS` | Comma-separated record types (`A,AAAA,NS,MX,TXT,SOA,CNAME,CAA,DS`) |
+| `--types` | `A,AAAA,NS,MX,TXT,SOA,CAA,DS` | Comma-separated record types (`A,AAAA,NS,MX,TXT,SOA,CNAME,CAA,DS,RRSIG`) |
 | `--json` | off | Machine-readable JSON output |
 | `--no-wildcard` | off | Skip wildcard detection |
 | `--no-axfr` | off | Skip the zone-transfer test |
@@ -63,6 +63,7 @@ Options:
 | `--no-mail-auth` | off | Skip the SPF/DKIM/DMARC summary |
 | `--no-reverse-dns` | off | Skip reverse DNS (PTR) lookups |
 | `--no-srv` | off | Skip SRV record enumeration |
+| `--no-dnssec` | off | Skip the DNSSEC signed-answer check |
 | `--brute` | off | Brute-force common subdomains from the built-in wordlist |
 | `--wordlist` | — | Wordlist file for `--brute` (one label per line; implies `--brute`) |
 | `--version` | — | Print version and exit |
@@ -189,6 +190,23 @@ such, not dropped. `--json` carries the same data as a `srv` object
 mapping each service to its list of `priority` / `weight` / `port` /
 `target` records.
 
+The DNSSEC signed-answer check re-queries A with the EDNS0 DO bit set
+and reports whether the answer carries RRSIG records, and whether the
+resolver set the AD (authenticated data) bit:
+
+```text
+[DNSSEC]
+DNSSEC: signed (RRSIG for A; AD bit set) — DS record present
+```
+
+A zone counts as signed only when an RRSIG record actually arrives —
+the AD bit alone is not proof, since a resolver may set it from its
+cache. A DS record from the enumeration is shown as a signed-delegation
+hint, not a verdict. The check reads signatures; it does not validate
+them (full chain validation needs the root trust anchor and is out of
+scope). `--json` carries the same data as a `dnssec` object with
+`signed`, `ad`, `rrsig_types`, and `has_ds`.
+
 A chain that ends at a name with no A/AAAA records is reported as a
 dead end, and a cycle (or a chain longer than 10 hops) is flagged
 instead of followed forever. `--json` carries the same data as a
@@ -221,7 +239,8 @@ always shows where its answers came from.
 
 - **Wire protocol** (`dnsx/dns.py`): builds and parses DNS messages by
   hand — label encoding, compression pointers, and record decoding for
-  A, AAAA, NS, CNAME, MX, TXT, SOA, CAA, DS, and SRV. UDP with automatic TCP fallback
+  A, AAAA, NS, CNAME, MX, TXT, SOA, CAA, DS, SRV, and RRSIG. EDNS0 OPT
+  records carry the DO bit for DNSSEC queries. UDP with automatic TCP fallback
   when the TC (truncated) bit is set — the bit is read from the reply
   header before the body is parsed, so a reply cut short mid-record still
   triggers the retry instead of surfacing a parse error; AXFR runs over TCP.
@@ -251,6 +270,11 @@ always shows where its answers came from.
   records (priority/weight/port/target, RFC 2782) and lists the
   services a domain publishes; a failed query for one service never
   aborts the others.
+- **DNSSEC signed-answer check** (`dnsx/recon.py`): re-queries A with
+  the EDNS0 DO bit set and reports whether RRSIG records arrived and
+  whether the resolver set the AD bit; a DS record from the enumeration
+  is shown as a signed-delegation hint. Signatures are read, not
+  validated.
 - **Subdomain brute-force** (`dnsx/recon.py`): `--brute` probes the
   built-in 51-label wordlist (or `--wordlist FILE`) with A queries;
   hits resolving only to the wildcard IPs are filtered out, so a
