@@ -67,6 +67,21 @@ def render_text(result: ReconResult) -> str:
             lines.append(f"  {ip} -> {ptr if ptr else '(no PTR record)'}")
         lines.append("")
 
+    if result.ns_glue and result.ns_glue.get("servers"):
+        lines.append("[NS glue]")
+        for s in result.ns_glue["servers"]:
+            if s["status"] == "ok":
+                lines.append(f"  {s['nameserver']} -> {', '.join(s['addresses'])}")
+            elif s["status"] == "missing":
+                lines.append(f"  {s['nameserver']} -> (no A/AAAA records — missing glue)")
+            else:
+                lines.append(f"  {s['nameserver']} -> (error: {s.get('detail', '')})")
+        missing = result.ns_glue.get("missing", [])
+        if missing:
+            lines.append(f"  [!] WARNING: {len(missing)} nameserver{'s' if len(missing) != 1 else ''} "
+                         f"without glue: {', '.join(missing)}")
+        lines.append("")
+
     if result.srv is not None:
         lines.append("[SRV]")
         services = result.srv.get("services", {})

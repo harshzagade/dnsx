@@ -62,6 +62,7 @@ Options:
 | `--no-cname-chain` | off | Skip CNAME chain following |
 | `--no-mail-auth` | off | Skip the SPF/DKIM/DMARC summary |
 | `--no-reverse-dns` | off | Skip reverse DNS (PTR) lookups |
+| `--no-ns-glue` | off | Skip the NS glue check |
 | `--no-srv` | off | Skip SRV record enumeration |
 | `--no-dnssec` | off | Skip the DNSSEC signed-answer check |
 | `--brute` | off | Brute-force common subdomains from the built-in wordlist |
@@ -175,6 +176,23 @@ IPv4 addresses query `<reversed>.in-addr.arpa`, IPv6 the nibble-reversed
 `ip6.arpa` name; an address with no PTR record is shown as such, never
 as an error. `--json` carries the same data as a `reverse_dns` object
 mapping each IP to its PTR name (or `null`).
+
+Every nameserver from the NS records is checked for glue — an A/AAAA
+address it resolves to — so a delegation pointing at a dead nameserver
+shows up in the report:
+
+```text
+[NS glue]
+  ns1.example.com. -> 192.0.2.53, 2001:db8::53
+  ns2.example.com. -> (no A/AAAA records — missing glue)
+  [!] WARNING: 1 nameserver without glue: ns2.example.com.
+```
+
+A nameserver that answers NXDOMAIN (or nothing) for both families is
+reported as missing glue, never as a scan error, and a nameserver that
+fails with any other DNS error is reported with the error instead.
+`--json` carries the same data as an `ns_glue` object with `servers`
+and `missing`.
 
 Common service SRV records are enumerated too, so exposed SIP, XMPP,
 LDAP, and Kerberos endpoints show up in the report:

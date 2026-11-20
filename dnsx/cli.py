@@ -43,6 +43,7 @@ def main(argv=None) -> int:
     parser.add_argument("--no-cname-chain", action="store_true", help="Skip CNAME chain following")
     parser.add_argument("--no-mail-auth", action="store_true", help="Skip the SPF/DKIM/DMARC summary")
     parser.add_argument("--no-reverse-dns", action="store_true", help="Skip reverse DNS (PTR) lookups")
+    parser.add_argument("--no-ns-glue", action="store_true", help="Skip the NS glue check")
     parser.add_argument("--no-srv", action="store_true", help="Skip SRV record enumeration")
     parser.add_argument("--no-dnssec", action="store_true", help="Skip the DNSSEC signed-answer check")
     parser.add_argument("--brute", action="store_true", help="Brute-force common subdomains from the built-in wordlist")
@@ -86,6 +87,7 @@ def main(argv=None) -> int:
             do_cname_chain=not args.no_cname_chain,
             do_mail_auth=not args.no_mail_auth,
             do_reverse_dns=not args.no_reverse_dns,
+            do_ns_glue=not args.no_ns_glue,
             do_srv=not args.no_srv,
             do_dnssec=not args.no_dnssec,
             do_brute_force=args.brute or wordlist is not None,

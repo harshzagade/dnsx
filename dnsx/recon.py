@@ -60,6 +60,7 @@ class ReconResult:
     brute_force: dict | None = None
     srv: dict | None = None
     dnssec: dict | None = None
+    ns_glue: dict | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -89,7 +90,8 @@ class ReconResult:
             "reverse_dns": self.reverse_dns,
             "brute_force": self.brute_force,
             "srv": self.srv,
-            "dnssec": self.dnssec
+            "dnssec": self.dnssec,
+            "ns_glue": self.ns_glue
         }
 
 def classify_axfr_error(message: str) -> str:
@@ -219,6 +221,7 @@ class Recon:
                   do_cname_chain: bool = True, do_mail_auth: bool = True,
                   do_reverse_dns: bool = True, do_brute_force: bool = False,
                   do_srv: bool = True, do_dnssec: bool = True,
+                  do_ns_glue: bool = True,
                   wordlist: list | None = None) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()
@@ -251,6 +254,8 @@ class Recon:
             self._check_mail_auth(domain, result)
         if do_reverse_dns:
             self._check_reverse_dns(domain, result)
+        if do_ns_glue:
+            self._check_ns_glue(domain, result)
         if do_srv:
             self._check_srv(domain, result)
         if do_dnssec:
@@ -423,6 +428,47 @@ class Recon:
                     pass
             lookups[ip] = ptr
         result.reverse_dns = {"lookups": lookups}
+
+    def _check_ns_glue(self, domain, result):
+        """Verify every NS hostname resolves to an A/AAAA address.
+
+        Sets result.ns_glue to {"servers", "missing"}. Each server entry
+        is {"nameserver", "addresses", "status"} with status "ok" (at
+        least one A/AAAA answer), "missing" (NXDOMAIN or no answers —
+        the zone publishes no glue for this nameserver) or "error" (any
+        other DNS failure, message in "detail"). A nameserver that does
+        not resolve never aborts the scan; it is reported, not fatal.
+        In-bailiwick nameservers normally need glue records in the
+        parent zone; out-of-bailiwick ones resolve through normal DNS,
+        so the check simply asks for the address either way.
+        """
+        servers = []
+        missing = []
+        for ns in result.nameservers:
+            addresses = []
+            error = None
+            for qtype in (TYPE_A, TYPE_AAAA):
+                try:
+                    resp = self.client.query(ns, qtype)
+                    addresses += [r["data"] for r in resp.get("answers", [])
+                                  if r.get("type") == qtype]
+                except DnsError as e:
+                    # NXDOMAIN on one family is not fatal: the other
+                    # family may still answer (e.g. IPv6-only host).
+                    if "NXDOMAIN" in str(e) or "Non-Existent Domain" in str(e):
+                        continue
+                    error = str(e)
+            if addresses:
+                servers.append({"nameserver": ns, "addresses": addresses,
+                                "status": "ok"})
+            elif error is not None:
+                servers.append({"nameserver": ns, "addresses": [],
+                                "status": "error", "detail": error})
+            else:
+                servers.append({"nameserver": ns, "addresses": [],
+                                "status": "missing"})
+                missing.append(ns)
+        result.ns_glue = {"servers": servers, "missing": missing}
 
     def _check_srv(self, domain, result):
         """SRV enumeration for the well-known services in SRV_SERVICES.

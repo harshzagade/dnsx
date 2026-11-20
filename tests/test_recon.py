@@ -400,6 +400,80 @@ def test_recon_reverse_dns_skipped_by_flag():
     assert "[Reverse DNS]" not in render_text(res)
 
 
+def test_recon_ns_glue_ok():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+        ("example.com", RECORD_TYPES["NS"]): [{"type": 2, "data": "ns1.example.com."},
+                                              {"type": 2, "data": "ns2.example.com."}],
+        ("ns1.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "192.0.2.53"}],
+        ("ns1.example.com", RECORD_TYPES["AAAA"]): [{"type": 28, "data": "2001:db8::53"}],
+        ("ns2.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "192.0.2.54"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A", "NS"), do_wildcard=False, do_axfr=False)
+    assert res.ns_glue == {
+        "servers": [
+            {"nameserver": "ns1.example.com.", "addresses": ["192.0.2.53", "2001:db8::53"], "status": "ok"},
+            {"nameserver": "ns2.example.com.", "addresses": ["192.0.2.54"], "status": "ok"},
+        ],
+        "missing": [],
+    }
+    txt = render_text(res)
+    assert "ns1.example.com. -> 192.0.2.53, 2001:db8::53" in txt
+    assert "ns2.example.com. -> 192.0.2.54" in txt
+    assert "WARNING" not in txt
+    assert json.loads(render_json(res))["ns_glue"]["missing"] == []
+
+
+def test_recon_ns_glue_missing():
+    routes = {
+        ("example.com", RECORD_TYPES["NS"]): [{"type": 2, "data": "ns1.example.com."},
+                                              {"type": 2, "data": "ns2.example.com."}],
+        ("ns1.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "192.0.2.53"}],
+        # ns2 has no A or AAAA route: the stub raises NXDOMAIN for both.
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("NS",), do_wildcard=False, do_axfr=False)
+    assert res.ns_glue["missing"] == ["ns2.example.com."]
+    assert res.ns_glue["servers"][1] == {"nameserver": "ns2.example.com.",
+                                          "addresses": [], "status": "missing"}
+    txt = render_text(res)
+    assert "ns2.example.com. -> (no A/AAAA records — missing glue)" in txt
+    assert "[!] WARNING: 1 nameserver without glue: ns2.example.com." in txt
+
+
+def test_recon_ns_glue_error_not_fatal():
+    routes = {
+        ("example.com", RECORD_TYPES["NS"]): [{"type": 2, "data": "ns1.example.com."}],
+        ("ns1.example.com", RECORD_TYPES["A"]): DnsError("Server Failure"),
+        ("ns1.example.com", RECORD_TYPES["AAAA"]): DnsError("Server Failure"),
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("NS",), do_wildcard=False, do_axfr=False)
+    assert res.ns_glue["servers"][0]["status"] == "error"
+    assert res.ns_glue["servers"][0]["detail"] == "Server Failure"
+    assert res.ns_glue["missing"] == []
+    assert "ns1.example.com. -> (error: Server Failure)" in render_text(res)
+
+
+def test_recon_ns_glue_skipped_by_flag():
+    routes = {
+        ("example.com", RECORD_TYPES["NS"]): [{"type": 2, "data": "ns1.example.com."}],
+        ("ns1.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "192.0.2.53"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("NS",), do_wildcard=False, do_axfr=False, do_ns_glue=False)
+    assert res.ns_glue is None
+    assert "[NS glue]" not in render_text(res)
+
+
+def test_recon_ns_glue_no_nameservers():
+    recon = Recon(client=StubClient())
+    res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=False)
+    assert res.ns_glue == {"servers": [], "missing": []}
+    assert "[NS glue]" not in render_text(res)
+
+
 def test_recon_invalid_domain():
     recon = Recon(client=StubClient())
     with pytest.raises(ValueError): recon.enumerate("", types=())
