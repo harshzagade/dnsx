@@ -42,6 +42,16 @@ def test_cli_reverse_dns_end_to_end(fake_dns_server, capsys):
     assert "(no PTR record)" in out  # the AAAA address has no PTR in the table
 
 
+def test_cli_tcp_end_to_end(fake_dns_server, capsys):
+    fake_dns_server["set"](example_table())
+    code = main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--no-axfr", "--tcp"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Resolver: 127.0.0.1" in out
+    assert "[TCP]" in out
+    assert "93.184.216.34" in out
+
+
 def test_cli_version(capsys):
     with pytest.raises(SystemExit) as e:
         main(["--version"])

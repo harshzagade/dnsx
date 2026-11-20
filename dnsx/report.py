@@ -7,6 +7,8 @@ def render_text(result: ReconResult) -> str:
         resolver_line = f"Resolver: {result.resolver}"
         if result.timeout is not None:
             resolver_line += f" (timeout {result.timeout}s)"
+        if result.transport == "tcp":
+            resolver_line += " [TCP]"
         lines.append(resolver_line)
         lines.append("")
     

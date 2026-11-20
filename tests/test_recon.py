@@ -474,6 +474,25 @@ def test_recon_ns_glue_no_nameservers():
     assert "[NS glue]" not in render_text(res)
 
 
+def test_recon_transport_reported():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "1.2.3.4"}],
+    }
+    client = StubClient(routes)
+    recon = Recon(client=client)
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    assert res.transport == "udp"
+    assert json.loads(render_json(res))["transport"] == "udp"
+    assert "[TCP]" not in render_text(res)
+
+    client.use_tcp = True
+    client.server = "127.0.0.1"  # the resolver line (which carries [TCP]) only renders with a server
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    assert res.transport == "tcp"
+    assert json.loads(render_json(res))["transport"] == "tcp"
+    assert " [TCP]" in render_text(res)
+
+
 def test_recon_invalid_domain():
     recon = Recon(client=StubClient())
     with pytest.raises(ValueError): recon.enumerate("", types=())

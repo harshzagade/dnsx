@@ -224,6 +224,24 @@ def test_dns_client_no_tc_uses_udp(fake_dns_server):
     assert client.tcp_fallbacks == 0
 
 
+def test_dns_client_use_tcp_forces_tcp(fake_dns_server):
+    """With use_tcp=True the query goes over TCP even when UDP would answer."""
+    table = example_table()
+    fake_dns_server["set"](table)
+    # UDP and TCP disagree on purpose, so the returned answer proves
+    # which transport served the query.
+    tcp_table = dict(table)
+    tcp_table[("example.com", TYPE_A)] = [("A", "203.0.113.9")]
+    fake_dns_server["table"].clear()
+    fake_dns_server["table"].update(tcp_table)
+    client = DnsClient(server="127.0.0.1", port=fake_dns_server["tcp_port"], use_tcp=True)
+    resp = client.query("example.com", TYPE_A)
+    assert resp["answers"][0]["data"] == "203.0.113.9"
+    # A direct-TCP query is not a TC fallback.
+    assert client.tcp_fallbacks == 0
+    assert DnsClient().use_tcp is False
+
+
 def test_dns_timeout(udp_blackhole):
     client = DnsClient(server="127.0.0.1", port=59999, timeout=0.1, retries=0)
     with pytest.raises(DnsTimeout):

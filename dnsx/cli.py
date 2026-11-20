@@ -35,6 +35,7 @@ def main(argv=None) -> int:
                         help="DNS resolver IP to query (overrides --server)")
     parser.add_argument("--port", type=int, default=53, help="DNS server port (default: 53)")
     parser.add_argument("--timeout", type=float, default=5.0, help="Query timeout in seconds (default: 5.0)")
+    parser.add_argument("--tcp", action="store_true", help="Force all queries over TCP (for resolvers that block UDP)")
     parser.add_argument("--types", default="A,AAAA,NS,MX,TXT,SOA,CAA,DS",
                         help="Comma-separated record types (default: A,AAAA,NS,MX,TXT,SOA,CAA,DS)")
     parser.add_argument("--json", action="store_true", help="Output in JSON format")
@@ -76,7 +77,7 @@ def main(argv=None) -> int:
         except ValueError as e:
             parser.error(str(e))
 
-    recon = Recon(server=args.server, port=args.port, timeout=args.timeout)
+    recon = Recon(server=args.server, port=args.port, timeout=args.timeout, use_tcp=args.tcp)
     
     try:
         result = recon.enumerate(

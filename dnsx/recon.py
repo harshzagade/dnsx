@@ -61,6 +61,7 @@ class ReconResult:
     srv: dict | None = None
     dnssec: dict | None = None
     ns_glue: dict | None = None
+    transport: str | None = None
 
     def to_dict(self) -> dict:
         def _safe(records):
@@ -91,7 +92,8 @@ class ReconResult:
             "brute_force": self.brute_force,
             "srv": self.srv,
             "dnssec": self.dnssec,
-            "ns_glue": self.ns_glue
+            "ns_glue": self.ns_glue,
+            "transport": self.transport
         }
 
 def classify_axfr_error(message: str) -> str:
@@ -213,8 +215,8 @@ def _txt_strings(record: dict) -> str:
 
 
 class Recon:
-    def __init__(self, client=None, server="8.8.8.8", port=53, timeout=5.0):
-        self.client = client or DnsClient(server=server, port=port, timeout=timeout)
+    def __init__(self, client=None, server="8.8.8.8", port=53, timeout=5.0, use_tcp=False):
+        self.client = client or DnsClient(server=server, port=port, timeout=timeout, use_tcp=use_tcp)
 
     def enumerate(self, domain: str, types=("A", "AAAA", "NS", "MX", "TXT", "SOA", "CAA", "DS"),
                   do_wildcard: bool = True, do_axfr: bool = True,
@@ -233,6 +235,7 @@ class Recon:
         # report (text and JSON) shows where the answers came from.
         result.resolver = getattr(self.client, "server", None)
         result.timeout = getattr(self.client, "timeout", None)
+        result.transport = "tcp" if getattr(self.client, "use_tcp", False) else "udp"
         last_resp = None
 
         for tname in types:

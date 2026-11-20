@@ -254,17 +254,25 @@ def parse_response(data: bytes, qid: int) -> Dict[str, Any]:
     return result
 
 class DnsClient:
-    def __init__(self, server: str = "8.8.8.8", port: int = 53, timeout: float = 5.0, retries: int = 1):
+    def __init__(self, server: str = "8.8.8.8", port: int = 53, timeout: float = 5.0, retries: int = 1,
+                 use_tcp: bool = False):
         self.server = server
         self.port = port
         self.timeout = timeout
         self.retries = retries
+        # With use_tcp every query goes over TCP from the start (for
+        # resolvers that block UDP or truncated-prone networks) instead
+        # of UDP with a TC-triggered fallback.
+        self.use_tcp = use_tcp
         # Queries retried over TCP after a truncated (TC-bit) UDP reply.
         self.tcp_fallbacks = 0
 
     def query(self, name: str, qtype: int, dnssec: bool = False) -> Dict[str, Any]:
         """Performs a DNS query over UDP, falling back to TCP if truncated.
 
+        With use_tcp=True the query goes straight over TCP (query_tcp)
+        and the UDP path is never touched; the direct-TCP query is not
+        counted in tcp_fallbacks, which only tracks TC-triggered retries.
         The TC bit is read from the 12-byte header *before* the body is
         parsed: a truncated reply is often cut short mid-record, so parsing
         it first would raise before the retry ever runs. Only a TC flag on
@@ -272,6 +280,8 @@ class DnsClient:
         With dnssec=True the query carries the EDNS0 DO bit, asking the
         resolver to return RRSIG records and set the AD bit.
         """
+        if self.use_tcp:
+            return self.query_tcp(name, qtype, dnssec=dnssec)
         qid = random.getrandbits(16)
         packet = build_query(name, qtype, qid, dnssec=dnssec)
 
