@@ -1,10 +1,11 @@
 import sys
 import argparse
 import ipaddress
+import json
 import re
 from dnsx import __version__
 from dnsx.recon import Recon, RECORD_TYPES
-from dnsx.report import render_text, render_json
+from dnsx.report import render_text, render_json, render_summary
 from dnsx.dns import DnsError
 
 _LABEL_RE = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
@@ -24,12 +25,84 @@ def _load_wordlist(path: str) -> list[str]:
         raise ValueError(f"Wordlist {path} is empty")
     return labels
 
+def _load_domain_file(path: str) -> list[str]:
+    """Read a batch file: one domain per line, `#` comments skipped."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            domains = [ln.strip() for ln in fh
+                       if ln.strip() and not ln.strip().startswith("#")]
+    except OSError as e:
+        raise ValueError(f"Cannot read domain file {path}: {e}")
+    if not domains:
+        raise ValueError(f"Domain file {path} is empty")
+    return domains
+
+
+def _run_scan(recon, args, domain, requested_types, wordlist):
+    """Run one enumeration, applying the --no-* skips.
+
+    Returns the ReconResult; raises ValueError / DnsError for a domain
+    that cannot be scanned at all (bad name, unreachable resolver).
+    Per-record failures land in result.errors instead — they are findings,
+    not scan failures.
+    """
+    result = recon.enumerate(
+        domain=domain,
+        types=requested_types,
+        do_wildcard=not args.no_wildcard,
+        do_axfr=not args.no_axfr,
+        do_cname_chain=not args.no_cname_chain,
+        do_mail_auth=not args.no_mail_auth,
+        do_reverse_dns=not args.no_reverse_dns,
+        do_ns_glue=not args.no_ns_glue,
+        do_srv=not args.no_srv,
+        do_dnssec=not args.no_dnssec,
+        do_brute_force=args.brute or wordlist is not None,
+        wordlist=wordlist
+    )
+    if args.no_wildcard:
+        result.wildcard = None
+    if args.no_axfr:
+        result.zone_transfer = None
+    return result
+
+
+def _batch(domains, recon, args, requested_types, wordlist) -> int:
+    """Scan each domain in turn, one summary line per domain.
+
+    A domain that cannot be scanned (bad name, resolver error) still
+    gets its line — `domain: ERROR <message>` — and the run exits 1,
+    so one bad line never aborts the rest of the batch. With --json
+    each line is a single JSON object ({"domain", "error"} on failure).
+    """
+    failed = 0
+    for domain in domains:
+        try:
+            result = _run_scan(recon, args, domain, requested_types, wordlist)
+        except (ValueError, DnsError) as e:
+            failed += 1
+            if args.json:
+                print(json.dumps({"domain": domain, "error": str(e)}))
+            else:
+                print(f"{domain}: ERROR {e}")
+            continue
+        if args.json:
+            print(json.dumps(result.to_dict()))
+        else:
+            print(render_summary(result))
+    return 1 if failed else 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="dnsx",
         description="DnsX — stdlib-only DNS recon: enumerate records, detect wildcards, test zone transfer."
     )
-    parser.add_argument("domain", help="Domain to scan")
+    parser.add_argument("domain", nargs="?", default=None, help="Domain to scan")
+    parser.add_argument("--file", default=None, metavar="FILE",
+                        help="Batch mode: scan one domain per line from FILE, "
+                             "one summary line per domain (cannot be combined "
+                             "with a positional domain)")
     parser.add_argument("--server", default="8.8.8.8", help="DNS server to use (default: 8.8.8.8)")
     parser.add_argument("--resolver", default=None,
                         help="DNS resolver IP to query (overrides --server)")
@@ -70,6 +143,11 @@ def main(argv=None) -> int:
         if t not in RECORD_TYPES:
             parser.error(f"Invalid record type: {t}")
 
+    if args.file is not None and args.domain is not None:
+        parser.error("--file cannot be combined with a positional domain")
+    if args.file is None and args.domain is None:
+        parser.error("a domain or --file is required")
+
     wordlist = None
     if args.wordlist is not None:
         try:
@@ -77,34 +155,26 @@ def main(argv=None) -> int:
         except ValueError as e:
             parser.error(str(e))
 
+    domains = None
+    if args.file is not None:
+        try:
+            domains = _load_domain_file(args.file)
+        except ValueError as e:
+            parser.error(str(e))
+
     recon = Recon(server=args.server, port=args.port, timeout=args.timeout, use_tcp=args.tcp)
-    
+
+    if domains is not None:
+        return _batch(domains, recon, args, requested_types, wordlist)
+
     try:
-        result = recon.enumerate(
-            domain=args.domain,
-            types=requested_types,
-            do_wildcard=not args.no_wildcard,
-            do_axfr=not args.no_axfr,
-            do_cname_chain=not args.no_cname_chain,
-            do_mail_auth=not args.no_mail_auth,
-            do_reverse_dns=not args.no_reverse_dns,
-            do_ns_glue=not args.no_ns_glue,
-            do_srv=not args.no_srv,
-            do_dnssec=not args.no_dnssec,
-            do_brute_force=args.brute or wordlist is not None,
-            wordlist=wordlist
-        )
-        
-        if args.no_wildcard:
-            result.wildcard = None
-        if args.no_axfr:
-            result.zone_transfer = None
+        result = _run_scan(recon, args, args.domain, requested_types, wordlist)
 
         if args.json:
             print(render_json(result), end="")
         else:
             print(render_text(result))
-            
+
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

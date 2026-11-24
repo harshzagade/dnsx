@@ -169,6 +169,43 @@ def render_text(result: ReconResult) -> str:
     lines.append(f"Scan took {round(result.duration_seconds, 3)}s")
     return "\n".join(lines)
 
+def render_summary(result: ReconResult) -> str:
+    """One-line batch summary: the findings that matter at a glance.
+
+    `example.com: A=93.184.216.34 NS=2 MX=mail.example.com wildcard=no axfr=refused`
+    A/AAAA addresses, nameserver count, first MX exchange, wildcard and
+    zone-transfer verdicts, and any per-type errors. Sections that were
+    skipped (--no-wildcard / --no-axfr) are left out, not faked.
+    """
+    parts = [f"{result.domain}:"]
+    a_recs = [format_record(r) for r in result.records.get("A", [])]
+    parts.append("A=" + (",".join(a_recs) if a_recs else "none"))
+    aaaa_recs = result.records.get("AAAA", [])
+    if aaaa_recs:
+        parts.append("AAAA=" + ",".join(format_record(r) for r in aaaa_recs))
+    parts.append(f"NS={len(result.nameservers)}")
+    mx_recs = result.records.get("MX", [])
+    if mx_recs:
+        first = mx_recs[0].get("data")
+        if isinstance(first, dict):
+            exchange = first.get("exchange")
+        elif isinstance(first, (list, tuple)):
+            exchange = first[1]
+        else:
+            exchange = first
+        parts.append(f"MX={exchange or '.'}")
+    else:
+        parts.append("MX=none")
+    if result.wildcard is not None:
+        parts.append("wildcard=" + ("yes" if result.wildcard.get("detected") else "no"))
+    if result.zone_transfer is not None:
+        parts.append("axfr=" + ("VULNERABLE" if result.zone_transfer.get("vulnerable")
+                                else "refused"))
+    if result.errors:
+        parts.append("errors=" + ",".join(sorted(result.errors)))
+    return " ".join(parts)
+
+
 def render_json(result: ReconResult) -> str:
     return json.dumps(result.to_dict(), indent=2) + "\n"
 

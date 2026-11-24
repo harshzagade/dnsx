@@ -42,6 +42,9 @@ python3 -m dnsx example.com --brute
 # Same, with your own wordlist (one label per line; implies --brute)
 python3 -m dnsx example.com --wordlist subdomains.txt
 
+# Batch mode: one domain per line, one summary line per domain
+python3 -m dnsx --file domains.txt
+
 # Non-standard resolver port (handy for a local test server)
 python3 -m dnsx example.com --server 127.0.0.1 --port 5353
 ```
@@ -51,6 +54,7 @@ Options:
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `domain` | — | Domain to scan |
+| `--file` | — | Batch mode: scan one domain per line from FILE, one summary line per domain (cannot be combined with a positional domain) |
 | `--server` | `8.8.8.8` | DNS resolver to query |
 | `--resolver` | — | Resolver IP to query (overrides `--server`; must be an IP) |
 | `--port` | `53` | Resolver port |
@@ -70,8 +74,17 @@ Options:
 | `--wordlist` | — | Wordlist file for `--brute` (one label per line; implies `--brute`) |
 | `--version` | — | Print version and exit |
 
-Exit codes: `0` clean run, `1` DNS/network error, `2` bad arguments or
-domain.
+Exit codes: `0` clean run, `1` DNS/network error (in batch mode: at
+least one domain failed to scan — the rest still ran), `2` bad
+arguments or domain.
+
+Batch mode prints one summary line per domain, e.g.
+`example.com: A=93.184.216.34 NS=2 MX=mail.example.com wildcard=no axfr=refused`
+— A/AAAA addresses, nameserver count, first MX exchange, wildcard and
+zone-transfer verdicts, plus any per-type errors. A domain that cannot
+be scanned at all still gets its line (`domain: ERROR <message>`) and
+the run exits `1`. With `--json` each line is a single JSON object
+(`{"domain", "error"}` on failure).
 
 ## Sample output
 
@@ -307,6 +320,13 @@ reply sets the TC bit or for zone transfers.
   built-in 51-label wordlist (or `--wordlist FILE`) with A queries;
   hits resolving only to the wildcard IPs are filtered out, so a
   wildcard domain reports no false subdomains.
+- **Batch mode** (`dnsx/cli.py`, `dnsx/report.py`): `--file DOMAINS.txt`
+  scans one domain per line and prints one summary line per domain
+  (`render_summary`) — A/AAAA addresses, NS count, first MX, wildcard
+  and zone-transfer verdicts, per-type errors. A bad line is reported
+  as `domain: ERROR <message>` and the rest of the batch still runs;
+  with `--json` each line is a single JSON object. Skipped checks are
+  left out of the summary, never faked.
 - **Output** (`dnsx/report.py`): plain-text report for humans, `--json`
   for pipelines.
 
@@ -316,7 +336,7 @@ reply sets the TC bit or for zone transfers.
 python3 -m pytest tests/ -q
 ```
 
-99 tests, all hermetic: record parsing is checked against hand-built
+103 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.

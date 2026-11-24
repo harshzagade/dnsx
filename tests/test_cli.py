@@ -2,7 +2,7 @@ import pytest
 import json
 from dnsx import __version__
 from dnsx.cli import main
-from dnsx.dns import TYPE_A, TYPE_CNAME, TYPE_TXT, TYPE_PTR
+from dnsx.dns import TYPE_A, TYPE_CNAME, TYPE_TXT, TYPE_PTR, TYPE_NS
 from conftest import example_table, wild_table
 
 
@@ -199,6 +199,78 @@ def test_cli_wordlist_errors(tmp_path, capsys):
     empty.write_text("# only a comment\n")
     with pytest.raises(SystemExit) as e:
         main(["example.com", "--wordlist", str(empty)])
+    assert e.value.code == 2
+
+
+def test_cli_batch_end_to_end(fake_dns_server, tmp_path, capsys):
+    table = example_table()
+    table[("example.org", TYPE_A)] = [("A", "93.184.216.35")]
+    table[("example.org", TYPE_NS)] = [("NS", "ns1.example.org.")]
+    fake_dns_server["set"](table)
+    batch = tmp_path / "domains.txt"
+    batch.write_text("# comment line\n\nexample.com\nexample.org\n")
+    code = main(["--file", str(batch), "--server", "127.0.0.1",
+                 "--port", str(fake_dns_server["tcp_port"]), "--no-axfr"])
+    assert code == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 2
+    assert lines[0].startswith("example.com:")
+    assert "A=93.184.216.34" in lines[0]
+    assert "NS=2" in lines[0]
+    assert "MX=mail.example.com" in lines[0]
+    assert "wildcard=no" in lines[0]
+    assert lines[1].startswith("example.org:")
+    assert "A=93.184.216.35" in lines[1]
+    assert "NS=1" in lines[1]
+    assert "MX=none" in lines[1]
+
+
+def test_cli_batch_json(fake_dns_server, tmp_path, capsys):
+    fake_dns_server["set"](example_table())
+    batch = tmp_path / "domains.txt"
+    batch.write_text("example.com\n")
+    code = main(["--file", str(batch), "--server", "127.0.0.1",
+                 "--port", str(fake_dns_server["tcp_port"]), "--json", "--no-axfr"])
+    assert code == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    data = json.loads(lines[0])
+    assert data["domain"] == "example.com"
+    assert data["records"]["A"][0]["data"] == "93.184.216.34"
+
+
+def test_cli_batch_bad_line_keeps_going(fake_dns_server, tmp_path, capsys):
+    fake_dns_server["set"](example_table())
+    batch = tmp_path / "domains.txt"
+    batch.write_text("not a domain\nexample.com\n")
+    code = main(["--file", str(batch), "--server", "127.0.0.1",
+                 "--port", str(fake_dns_server["tcp_port"]), "--no-axfr"])
+    assert code == 1
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 2
+    assert lines[0].startswith("not a domain: ERROR")
+    assert lines[1].startswith("example.com:")
+    assert "A=93.184.216.34" in lines[1]
+
+
+def test_cli_batch_file_errors(tmp_path, capsys):
+    missing = tmp_path / "nope.txt"
+    with pytest.raises(SystemExit) as e:
+        main(["--file", str(missing)])
+    assert e.value.code == 2
+
+    empty = tmp_path / "empty.txt"
+    empty.write_text("# only a comment\n")
+    with pytest.raises(SystemExit) as e:
+        main(["--file", str(empty)])
+    assert e.value.code == 2
+
+    with pytest.raises(SystemExit) as e:
+        main(["example.com", "--file", str(empty)])
+    assert e.value.code == 2
+
+    with pytest.raises(SystemExit) as e:
+        main([])
     assert e.value.code == 2
 
 
