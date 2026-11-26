@@ -68,6 +68,7 @@ Options:
 | `--no-mail-auth` | off | Skip the SPF/DKIM/DMARC summary |
 | `--no-reverse-dns` | off | Skip reverse DNS (PTR) lookups |
 | `--no-ns-glue` | off | Skip the NS glue check |
+| `--no-apex-www` | off | Skip the apex vs www comparison |
 | `--no-srv` | off | Skip SRV record enumeration |
 | `--no-dnssec` | off | Skip the DNSSEC signed-answer check |
 | `--brute` | off | Brute-force common subdomains from the built-in wordlist |
@@ -208,6 +209,25 @@ fails with any other DNS error is reported with the error instead.
 `--json` carries the same data as an `ns_glue` object with `servers`
 and `missing`.
 
+The apex A/AAAA set is compared with `www`'s, so a split setup (apex
+on one host, www on another — or a www that was never pointed at
+anything) shows up in the report:
+
+```text
+[Apex vs www]
+  example.com: 93.184.216.34, 2606:2800:220:1:248:1893:25c8:1946
+  www.example.com: 93.184.216.34
+  [!] WARNING: apex and www serve different addresses
+```
+
+Both names are queried directly for A and AAAA, so the comparison
+works even when `--types` excluded them. A side with no A/AAAA records
+is reported as missing, not as an error, and a query failing for any
+other reason is reported with the error instead of guessed at.
+`--json` carries the same data as an `apex_www` object with `apex`,
+`www`, `status` (`match`, `differ`, `www-missing`, `apex-missing`,
+`none`, or `error`), and `detail`.
+
 Common service SRV records are enumerated too, so exposed SIP, XMPP,
 LDAP, and Kerberos endpoints show up in the report:
 
@@ -316,6 +336,10 @@ reply sets the TC bit or for zone transfers.
   whether the resolver set the AD bit; a DS record from the enumeration
   is shown as a signed-delegation hint. Signatures are read, not
   validated.
+- **Apex vs www** (`dnsx/recon.py`): queries the apex and `www.<domain>`
+  for A/AAAA directly (independent of `--types`) and compares the sets —
+  match, differ, or one side missing; a non-NXDOMAIN failure is reported
+  with the error instead of guessed at.
 - **Subdomain brute-force** (`dnsx/recon.py`): `--brute` probes the
   built-in 51-label wordlist (or `--wordlist FILE`) with A queries;
   hits resolving only to the wildcard IPs are filtered out, so a
@@ -336,7 +360,7 @@ reply sets the TC bit or for zone transfers.
 python3 -m pytest tests/ -q
 ```
 
-103 tests, all hermetic: record parsing is checked against hand-built
+112 tests, all hermetic: record parsing is checked against hand-built
 wire bytes, and client/CLI tests run against a fake in-process DNS
 server (a fake UDP socket + a real TCP listener on loopback), so the
 suite never touches the internet.

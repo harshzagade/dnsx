@@ -61,6 +61,7 @@ class ReconResult:
     srv: dict | None = None
     dnssec: dict | None = None
     ns_glue: dict | None = None
+    apex_www: dict | None = None
     transport: str | None = None
 
     def to_dict(self) -> dict:
@@ -93,6 +94,7 @@ class ReconResult:
             "srv": self.srv,
             "dnssec": self.dnssec,
             "ns_glue": self.ns_glue,
+            "apex_www": self.apex_www,
             "transport": self.transport
         }
 
@@ -223,7 +225,7 @@ class Recon:
                   do_cname_chain: bool = True, do_mail_auth: bool = True,
                   do_reverse_dns: bool = True, do_brute_force: bool = False,
                   do_srv: bool = True, do_dnssec: bool = True,
-                  do_ns_glue: bool = True,
+                  do_ns_glue: bool = True, do_apex_www: bool = True,
                   wordlist: list | None = None) -> ReconResult:
         start_time = time.perf_counter()
         domain = domain.strip(".").lower()
@@ -259,6 +261,8 @@ class Recon:
             self._check_reverse_dns(domain, result)
         if do_ns_glue:
             self._check_ns_glue(domain, result)
+        if do_apex_www:
+            self._check_apex_www(domain, result)
         if do_srv:
             self._check_srv(domain, result)
         if do_dnssec:
@@ -472,6 +476,60 @@ class Recon:
                                 "status": "missing"})
                 missing.append(ns)
         result.ns_glue = {"servers": servers, "missing": missing}
+
+    def _query_addresses(self, name):
+        """A/AAAA answers for `name` as {"A": [...], "AAAA": [...]}.
+
+        Returns (addresses, error). NXDOMAIN or an empty answer means the
+        name simply has no addresses (error is None); any other DNS
+        failure is returned as the error string so the caller can report
+        it instead of guessing. A recursive resolver chases CNAMEs, so a
+        www that CNAMEs elsewhere still yields its final A/AAAA here.
+        """
+        addresses = {"A": [], "AAAA": []}
+        for qtype, tname in ((TYPE_A, "A"), (TYPE_AAAA, "AAAA")):
+            try:
+                resp = self.client.query(name, qtype)
+            except DnsError as e:
+                if "NXDOMAIN" in str(e) or "Non-Existent Domain" in str(e):
+                    continue
+                return addresses, str(e)
+            addresses[tname] = sorted({str(r["data"]) for r in resp.get("answers", [])
+                                       if r.get("type") == qtype})
+        return addresses, None
+
+    def _check_apex_www(self, domain, result):
+        """Compare the apex A/AAAA set with www's and note when they differ.
+
+        Sets result.apex_www to {"apex", "www", "status", "detail"}.
+        Status is "match" (identical A and AAAA sets), "differ" (both
+        sides answer but the sets are not equal — a split setup worth a
+        look), "www-missing" (apex answers, www has no A/AAAA),
+        "apex-missing" (www answers, apex has none), "none" (neither
+        answers) or "error" (a query failed for a reason other than
+        NXDOMAIN, message in "detail"). The check queries both names
+        directly, so it works even when --types excluded A/AAAA.
+        """
+        apex, apex_err = self._query_addresses(domain)
+        www, www_err = self._query_addresses(f"www.{domain}")
+        detail = apex_err or www_err
+        if detail is not None:
+            status = "error"
+        else:
+            apex_any = bool(apex["A"] or apex["AAAA"])
+            www_any = bool(www["A"] or www["AAAA"])
+            if not apex_any and not www_any:
+                status = "none"
+            elif apex_any and not www_any:
+                status = "www-missing"
+            elif www_any and not apex_any:
+                status = "apex-missing"
+            elif apex == www:
+                status = "match"
+            else:
+                status = "differ"
+        result.apex_www = {"apex": apex, "www": www, "status": status,
+                           "detail": detail}
 
     def _check_srv(self, domain, result):
         """SRV enumeration for the well-known services in SRV_SERVICES.

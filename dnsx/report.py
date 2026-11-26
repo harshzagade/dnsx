@@ -84,6 +84,32 @@ def render_text(result: ReconResult) -> str:
                          f"without glue: {', '.join(missing)}")
         lines.append("")
 
+    if result.apex_www is not None:
+        lines.append("[Apex vs www]")
+        aw = result.apex_www
+        status = aw.get("status")
+        def _addrs(side):
+            parts = []
+            for fam in ("A", "AAAA"):
+                parts += side.get(fam, [])
+            return ", ".join(parts) if parts else "(no A/AAAA records)"
+        if status == "error":
+            lines.append(f"  Apex vs www check failed: {aw.get('detail', '')}")
+        else:
+            lines.append(f"  {result.domain}: {_addrs(aw['apex'])}")
+            lines.append(f"  www.{result.domain}: {_addrs(aw['www'])}")
+            if status == "match":
+                lines.append("  Apex and www serve the same addresses")
+            elif status == "differ":
+                lines.append("  [!] WARNING: apex and www serve different addresses")
+            elif status == "www-missing":
+                lines.append(f"  [!] WARNING: www.{result.domain} has no A/AAAA records")
+            elif status == "apex-missing":
+                lines.append(f"  [!] WARNING: {result.domain} (apex) has no A/AAAA records")
+            else:  # none
+                lines.append("  Neither apex nor www has A/AAAA records")
+        lines.append("")
+
     if result.srv is not None:
         lines.append("[SRV]")
         services = result.srv.get("services", {})

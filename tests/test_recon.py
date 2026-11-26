@@ -421,7 +421,8 @@ def test_recon_ns_glue_ok():
     txt = render_text(res)
     assert "ns1.example.com. -> 192.0.2.53, 2001:db8::53" in txt
     assert "ns2.example.com. -> 192.0.2.54" in txt
-    assert "WARNING" not in txt
+    assert "without glue" not in txt  # (the fixture has no www records, so the
+    # Apex vs www section correctly reports www-missing — not a glue warning)
     assert json.loads(render_json(res))["ns_glue"]["missing"] == []
 
 
@@ -472,6 +473,96 @@ def test_recon_ns_glue_no_nameservers():
     res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=False)
     assert res.ns_glue == {"servers": [], "missing": []}
     assert "[NS glue]" not in render_text(res)
+
+
+def test_recon_apex_www_match():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+        ("example.com", RECORD_TYPES["AAAA"]): [{"type": 28, "data": "2606:2800:220:1:248:1893:25c8:1946"}],
+        ("www.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+        ("www.example.com", RECORD_TYPES["AAAA"]): [{"type": 28, "data": "2606:2800:220:1:248:1893:25c8:1946"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A", "AAAA"), do_wildcard=False, do_axfr=False)
+    assert res.apex_www["status"] == "match"
+    assert res.apex_www["apex"] == {"A": ["93.184.216.34"],
+                                     "AAAA": ["2606:2800:220:1:248:1893:25c8:1946"]}
+    assert res.apex_www["www"] == res.apex_www["apex"]
+    txt = render_text(res)
+    assert "[Apex vs www]" in txt
+    assert "Apex and www serve the same addresses" in txt
+    assert json.loads(render_json(res))["apex_www"]["status"] == "match"
+
+
+def test_recon_apex_www_differ():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+        ("www.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "203.0.113.9"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    assert res.apex_www["status"] == "differ"
+    assert res.apex_www["apex"] == {"A": ["93.184.216.34"], "AAAA": []}
+    assert res.apex_www["www"] == {"A": ["203.0.113.9"], "AAAA": []}
+    txt = render_text(res)
+    assert "[!] WARNING: apex and www serve different addresses" in txt
+    assert "www.example.com: 203.0.113.9" in txt
+
+
+def test_recon_apex_www_www_missing():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+        # No www route: the stub raises NXDOMAIN for both families.
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    assert res.apex_www["status"] == "www-missing"
+    assert res.apex_www["www"] == {"A": [], "AAAA": []}
+    txt = render_text(res)
+    assert "[!] WARNING: www.example.com has no A/AAAA records" in txt
+
+
+def test_recon_apex_www_apex_missing():
+    routes = {
+        ("www.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+        # No apex route: the stub raises NXDOMAIN for both families.
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    assert res.apex_www["status"] == "apex-missing"
+    assert res.apex_www["apex"] == {"A": [], "AAAA": []}
+    txt = render_text(res)
+    assert "[!] WARNING: example.com (apex) has no A/AAAA records" in txt
+
+
+def test_recon_apex_www_neither():
+    recon = Recon(client=StubClient())
+    res = recon.enumerate("example.com", types=(), do_wildcard=False, do_axfr=False)
+    assert res.apex_www["status"] == "none"
+    assert "Neither apex nor www has A/AAAA records" in render_text(res)
+
+
+def test_recon_apex_www_error_not_fatal():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): DnsError("Server Failure"),
+        ("www.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False)
+    assert res.apex_www["status"] == "error"
+    assert res.apex_www["detail"] == "Server Failure"
+    assert "Apex vs www check failed: Server Failure" in render_text(res)
+
+
+def test_recon_apex_www_skipped_by_flag():
+    routes = {
+        ("example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+        ("www.example.com", RECORD_TYPES["A"]): [{"type": 1, "data": "93.184.216.34"}],
+    }
+    recon = Recon(client=StubClient(routes))
+    res = recon.enumerate("example.com", types=("A",), do_wildcard=False, do_axfr=False, do_apex_www=False)
+    assert res.apex_www is None
+    assert "[Apex vs www]" not in render_text(res)
 
 
 def test_recon_transport_reported():

@@ -55,6 +55,7 @@ def _run_scan(recon, args, domain, requested_types, wordlist):
         do_mail_auth=not args.no_mail_auth,
         do_reverse_dns=not args.no_reverse_dns,
         do_ns_glue=not args.no_ns_glue,
+        do_apex_www=not args.no_apex_www,
         do_srv=not args.no_srv,
         do_dnssec=not args.no_dnssec,
         do_brute_force=args.brute or wordlist is not None,
@@ -118,6 +119,7 @@ def main(argv=None) -> int:
     parser.add_argument("--no-mail-auth", action="store_true", help="Skip the SPF/DKIM/DMARC summary")
     parser.add_argument("--no-reverse-dns", action="store_true", help="Skip reverse DNS (PTR) lookups")
     parser.add_argument("--no-ns-glue", action="store_true", help="Skip the NS glue check")
+    parser.add_argument("--no-apex-www", action="store_true", help="Skip the apex vs www comparison")
     parser.add_argument("--no-srv", action="store_true", help="Skip SRV record enumeration")
     parser.add_argument("--no-dnssec", action="store_true", help="Skip the DNSSEC signed-answer check")
     parser.add_argument("--brute", action="store_true", help="Brute-force common subdomains from the built-in wordlist")

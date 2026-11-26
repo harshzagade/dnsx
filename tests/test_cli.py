@@ -42,6 +42,23 @@ def test_cli_reverse_dns_end_to_end(fake_dns_server, capsys):
     assert "(no PTR record)" in out  # the AAAA address has no PTR in the table
 
 
+def test_cli_apex_www_end_to_end(fake_dns_server, capsys):
+    # example_table: www has the apex A but no AAAA, so the sets differ.
+    fake_dns_server["set"](example_table())
+    code = main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--no-axfr"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "[Apex vs www]" in out
+    assert "[!] WARNING: apex and www serve different addresses" in out
+
+
+def test_cli_no_apex_www(fake_dns_server, capsys):
+    fake_dns_server["set"](example_table())
+    code = main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--no-axfr", "--no-apex-www"])
+    assert code == 0
+    assert "[Apex vs www]" not in capsys.readouterr().out
+
+
 def test_cli_tcp_end_to_end(fake_dns_server, capsys):
     fake_dns_server["set"](example_table())
     code = main(["example.com", "--server", "127.0.0.1", "--port", str(fake_dns_server["tcp_port"]), "--no-axfr", "--tcp"])
